@@ -53,6 +53,22 @@ startup = "./run.py --noop"           # boot a worker, do no work (measures B)
 sample  = 0                           # 0 = all cases, N = random sample
 ```
 
+If the workload already times its own units of work, harvest them from its log
+instead — one run rather than one process per case, and the real times rather
+than reconstructions:
+
+```toml
+[cases]
+log          = "/tmp/run.log.shard*"      # glob, parsed after a profiling run
+case_pattern = '^PASS \[(?P<group>[^\]]+)\] (?P<name>.+?)\s+\((?P<ms>\d+)ms\)'
+boot_pattern = 'ready in (?P<ms>\d+)ms'   # optional: per-worker boot, B
+profile_jobs = 1                          # workers for the profiling run
+```
+
+The pattern needs a named group for the duration (`ms`, `sec` or `s`); every
+other named group is joined to form the case id. `examples/nvim-tests.toml` is
+a working instance of this against a real test suite.
+
 `startup` matters more than it looks. Each case is timed in its own process, so
 every measurement carries one boot; without `startup` to subtract it, the work
 total comes out above the CPU time the parallel run actually burns and the
@@ -88,6 +104,11 @@ the real run trails by more than 25%, scheduling is the problem and the worker
 count is not worth tuning yet — a pull queue fixes it and the curve changes
 shape afterwards.
 
+**A reliability gate.** Worker counts where the task failed are excluded from
+the recommendation regardless of speed, and reported with their failure rate. A
+run that does not finish is not an optimum, and heavily oversubscribed runs are
+exactly where timing-sensitive workloads start to flake.
+
 **A recommendation from the measurements, not the model.** The ceilings are
 estimates; the sweep is ground truth. conctune recommends the cheapest N within
 3% of the fastest measured wall time, then reports the binding ceiling as
@@ -120,8 +141,14 @@ finds.
   is `1/sigma`. Sweep further past the core count if you need to pin it down.
 - **fastest point is the largest swept** — the peak may be beyond your range;
   extend `--points`.
-- **hardware ceiling below the measured optimum** — normal with SMT: the extra
-  threads win sub-linearly. Treat it as a bonus, not headroom.
+- **hardware ceiling below the measured optimum** — the ceilings are
+  first-order estimates; workers past them still win, just sub-linearly.
+- **hardware ceiling *above* the core count** — the cases block rather than
+  compute (waiting on I/O, a language server, a subprocess), so oversubscribing
+  pays. The report says by how much.
+- **rows marked `(saturated)` in the balance table** — past core saturation a
+  case no longer runs at its contention-free service time, so the simulated
+  schedule is optimistic there and those rows are excluded from the judgement.
 
 ## Tests
 

@@ -169,12 +169,20 @@ def analyse(
     summary: dict[int, dict],
     task_profile: dict | None = None,
 ) -> dict:
-    points = sorted(summary)
-    if not points or 1 not in summary:
+    timed = {n: e for n, e in summary.items() if e.get("wall_median")}
+    points = sorted(timed)
+    if not points or 1 not in timed:
         raise ValueError("sweep must include a successful N=1 baseline")
 
-    baseline = summary[1]["wall_median"]
-    speedup = [baseline / summary[n]["wall_median"] for n in points]
+    # Worker counts the task did not survive. Faster is irrelevant if the run
+    # does not finish, so these are excluded from the recommendation and
+    # reported separately.
+    unreliable = {
+        n: e for n, e in summary.items() if e.get("fail_rate", 0.0) > 0.0
+    }
+
+    baseline = timed[1]["wall_median"]
+    speedup = [baseline / timed[n]["wall_median"] for n in points]
 
     fit = fit_usl(points, speedup)
 
@@ -217,22 +225,40 @@ def analyse(
     # --- hardware ceiling from /proc/stat CPU accounting --------------------
     probe_n = min(points, key=lambda n: abs(n - cores_physical))
     cpu_total = summary[probe_n]["cpu_median"]
-    work_overstated = False
-    if cpu_total > 0 and work > 0:
-        efficiency = work / cpu_total
-        if efficiency > 1.0:
-            # The parallel run burned less CPU than the cases are supposed to
-            # cost. The service times, not the machine, are wrong.
-            work_overstated = True
-            efficiency = 1.0
-        ceilings["hardware"] = {
-            "n": cores_physical * efficiency,
-            "label": "cores * work / cpu_total",
-            "detail": (
+    # A ratio above 1 is not an error: it means a second of work costs less
+    # than a second of CPU, because cases spend part of their time blocked
+    # (sleeping, waiting on I/O, on a language server, on a subprocess). That
+    # is exactly the condition that makes oversubscribing the cores pay.
+    blocking_factor = work / cpu_total if cpu_total > 0 and work > 0 else None
+    if blocking_factor:
+        core_seconds = cpu_total / work
+        if blocking_factor > 1.05:
+            detail = (
+                f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work -- "
+                f"a case occupies {core_seconds:.2f} of a core while it runs, so "
+                f"about {blocking_factor:.1f} of them fit per core"
+            )
+        else:
+            detail = (
                 f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work "
-                f"({efficiency * 100:.0f}% of burned cycles useful)"
-            ),
+                f"({min(blocking_factor, 1.0) * 100:.0f}% of burned cycles useful)"
+            )
+        ceilings["hardware"] = {
+            "n": cores_physical * blocking_factor,
+            "label": "cores * work / cpu_total",
+            "detail": detail,
         }
+
+    # Service times can only be overstated in the mode that reconstructs them
+    # one process per case, and only when the boot they each paid was never
+    # measured.
+    work_overstated = bool(
+        task_profile
+        and task_profile.get("source") != "log"
+        and not (task_profile.get("startup") or {}).get("measured")
+        and blocking_factor
+        and blocking_factor > 1.05
+    )
 
     # --- parallelism ceiling ------------------------------------------------
     if service_times and span > 0:
@@ -251,12 +277,18 @@ def analyse(
     best_n = min(points, key=lambda n: summary[n]["wall_median"])
     knee = _knee(points, speedup)
 
-    recommended = _recommend(summary, points, binding, knee)
+    recommended = _recommend(timed, points, binding, knee, unreliable=unreliable)
 
     schedule = (
         schedule_analysis(service_times, points) if service_times else None
     )
-    imbalance = _imbalance(summary, schedule, boot) if schedule else None
+    # Above the hardware ceiling the machine is saturated, so a case no longer
+    # runs at its contention-free service time and a simulation built from
+    # those times stops being a fair comparison.
+    valid_to = ceilings.get("hardware", {}).get("n", float("inf"))
+    imbalance = (
+        _imbalance(summary, schedule, boot, valid_to) if schedule else None
+    )
 
     return {
         "points": points,
@@ -272,9 +304,11 @@ def analyse(
         "best_measured_wall": summary[best_n]["wall_median"],
         "knee": knee,
         "recommended_n": recommended,
+        "unreliable": {n: e for n, e in unreliable.items()},
         "schedule": schedule,
         "imbalance": imbalance,
         "work_overstated": work_overstated,
+        "blocking_factor": blocking_factor,
     }
 
 
@@ -295,6 +329,7 @@ def _recommend(
     binding,
     knee: int,
     tolerance: float = 0.03,
+    unreliable: dict[int, dict] | None = None,
 ) -> dict:
     """Pick N from the measurements, not from the ceilings.
 
@@ -303,13 +338,31 @@ def _recommend(
     cheapest worker count that lands within `tolerance` of the best measured
     makespan -- no point paying for workers that buy under 3%.
     """
-    best_n = min(points, key=lambda n: summary[n]["wall_median"])
+    unreliable = unreliable or {}
+    clean = [n for n in points if n not in unreliable] or points
+
+    best_n = min(clean, key=lambda n: summary[n]["wall_median"])
     best_wall = summary[best_n]["wall_median"]
 
-    within = [n for n in points if summary[n]["wall_median"] <= best_wall * (1 + tolerance)]
+    within = [n for n in clean if summary[n]["wall_median"] <= best_wall * (1 + tolerance)]
     chosen = min(within)
 
     notes = []
+    if unreliable:
+        listed = ", ".join(
+            f"N={n} ({e['failed']}/{e['reps_total']} runs)"
+            for n, e in sorted(unreliable.items())
+        )
+        notes.append(f"the task failed at {listed} -- excluded from the choice")
+        faster = [
+            n for n, e in unreliable.items()
+            if e.get("wall_median") and e["wall_median"] < best_wall
+        ]
+        if faster:
+            notes.append(
+                f"N={min(faster)} was faster still but did not finish reliably; "
+                "a worker count the task cannot survive is not an optimum"
+            )
     if best_n == max(points):
         notes.append(
             f"the fastest point is the largest swept (N={best_n}); the peak may lie "
@@ -318,9 +371,8 @@ def _recommend(
     if binding and binding[1]["n"] < chosen * 0.75:
         notes.append(
             f"the {binding[0]} ceiling estimates N<={binding[1]['n']:.1f}, below the "
-            f"measured optimum of {chosen}; the extra workers are winning less than "
-            "linearly (often SMT), so treat N above the ceiling as a small bonus, "
-            "not headroom"
+            f"measured optimum of {chosen} -- the ceiling is a first-order estimate "
+            "and the workers past it still win, just sub-linearly"
         )
     if chosen < best_n:
         saving = (summary[chosen]["wall_median"] / best_wall - 1) * 100
@@ -344,7 +396,12 @@ def _recommend(
     }
 
 
-def _imbalance(summary: dict[int, dict], schedule: dict, boot: float = 0.0) -> dict:
+def _imbalance(
+    summary: dict[int, dict],
+    schedule: dict,
+    boot: float = 0.0,
+    valid_to: float = float("inf"),
+) -> dict:
     """Observed makespan against what a good scheduler would have achieved.
 
     The simulated schedule is pure work placement, so worker boot is added
@@ -367,11 +424,14 @@ def _imbalance(summary: dict[int, dict], schedule: dict, boot: float = 0.0) -> d
             "observed_imbalance": observed / ideal if ideal else float("nan"),
             "lpt_imbalance": entry["lpt_imbalance"],
             "overhead_vs_lpt": observed / achievable if achievable else float("nan"),
+            # Beyond core saturation the simulated times are optimistic by an
+            # unknown factor, so this row says nothing about scheduling.
+            "comparable": n <= valid_to,
         }
 
     # Scheduling is the problem when the real run trails a greedy schedule of
     # the same cases by a wide margin at the worker counts that matter.
-    interesting = [r for n, r in rows.items() if n > 1]
+    interesting = [r for n, r in rows.items() if n > 1 and r["comparable"]]
     worst = max(
         (r["overhead_vs_lpt"] for r in interesting if math.isfinite(r["overhead_vs_lpt"])),
         default=float("nan"),
@@ -387,6 +447,8 @@ def _imbalance(summary: dict[int, dict], schedule: dict, boot: float = 0.0) -> d
     return {
         "by_n": rows,
         "worst_overhead_vs_lpt": worst,
+        "compared_up_to": valid_to,
+        "rows_dropped": sum(1 for n, r in rows.items() if n > 1 and not r["comparable"]),
         "bound_violated": impossible,
         "scheduling_suspect": (
             not impossible and math.isfinite(worst) and worst > 1.25

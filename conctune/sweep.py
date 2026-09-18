@@ -104,19 +104,33 @@ def aggregate(rows: list[dict]) -> dict[int, dict]:
     Median, not mean: on a thermally throttled laptop the distribution has a
     long right tail and the mean chases it.
     """
-    good = [r for r in rows if r["returncode"] == 0]
     by_n: dict[int, list[dict]] = {}
-    for row in good:
+    for row in rows:
         by_n.setdefault(row["n"], []).append(row)
 
     summary = {}
     for n, group in sorted(by_n.items()):
-        walls = sorted(r["wall"] for r in group)
-        cpus = [r["cpu"] for r in group]
+        good = [r for r in group if r["returncode"] == 0]
+        failed = len(group) - len(good)
+        if not good:
+            # Nothing usable to time, but the failures still matter: a worker
+            # count the task cannot survive is not a candidate at any speed.
+            summary[n] = {
+                "n": n, "reps": 0, "reps_total": len(group), "failed": failed,
+                "fail_rate": 1.0, "wall_median": None, "wall_min": None,
+                "wall_max": None, "spread": 0.0, "cpu_median": 0.0,
+            }
+            continue
+
+        walls = sorted(r["wall"] for r in good)
+        cpus = [r["cpu"] for r in good]
         median = statistics.median(walls)
         summary[n] = {
             "n": n,
             "reps": len(walls),
+            "reps_total": len(group),
+            "failed": failed,
+            "fail_rate": failed / len(group),
             "wall_median": median,
             "wall_min": walls[0],
             "wall_max": walls[-1],

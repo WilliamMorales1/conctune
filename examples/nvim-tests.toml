@@ -1,0 +1,26 @@
+# A real workload: the headless Neovim config test suite.
+#
+# Shows the log-parsing case source. The harness times every case and reports
+# each worker's boot, so the service times come from one run instead of 318
+# separate Neovim launches -- which would have cost more than the whole sweep
+# and measured the wrong thing anyway.
+#
+# Adjust the paths, then:  python3 -m conctune auto --task examples/nvim-tests.toml
+name = "nvim-tests"
+
+[run]
+cmd = "NVIM_TEST_JOBS={j} ./test/run.sh /tmp/conctune-nvim.log"
+cwd = "~/.config/nvim"
+timeout = 1800
+
+[cases]
+log = "/tmp/conctune-nvim.log.shard*"
+case_pattern = '^(?:PASS|FAIL)\s+\[(?P<group>[^\]]+)\]\s+(?P<name>.+?)\s+\((?P<ms>\d+)ms\)'
+boot_pattern = 'ready in (?P<ms>\d+)ms'
+profile_jobs = 1
+
+[sweep]
+points = [1, 2, 4, 6, 8, 10, 12, 16, 20, 24]
+repeats = 3
+randomize = true
+warmup = 1

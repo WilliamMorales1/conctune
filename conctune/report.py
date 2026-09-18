@@ -44,6 +44,8 @@ ADVICE = {
         "HARDWARE-BOUND -- the cores are already busy doing useful work.",
         [
             "more workers only add context switches and cache pressure",
+            "if cases block rather than compute, this ceiling sits above the core "
+            "count on purpose -- that headroom is the blocked time",
             "the win is in per-case cost now: algorithm, memory traffic, vectorisation",
             "check the roofline before assuming compute rather than memory bandwidth",
         ],
@@ -103,18 +105,38 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
     else:
         add("  span  Tinf = not measured (no [cases] section in the task spec)")
 
+    blocking = result.get("blocking_factor")
+    if blocking and blocking > 1.05:
+        add(
+            f"  cases block rather than compute: {blocking:.1f}x more wall time than "
+            "CPU time, so"
+        )
+        add(
+            "  oversubscribing the cores pays until the waiting, not the cores, "
+            "runs out"
+        )
+
     # ---- measurements ----------------------------------------------------
     add("")
     add("MEASURED")
-    add(f"  {'N':>4}  {'wall (s)':>10}  {'speedup':>8}  {'efficiency':>10}  {'spread':>7}")
-    add("  " + RULE[:48])
+    add(f"  {'N':>4}  {'wall (s)':>10}  {'speedup':>8}  {'efficiency':>10}  "
+        f"{'spread':>7}  {'failed':>7}")
+    add("  " + RULE[:58])
     for n in result["points"]:
         entry = summary[n]
         speedup = result["speedup"][n]
+        failed = entry.get("failed", 0)
+        flag = f"{failed}/{entry.get('reps_total', entry['reps'])}" if failed else "-"
         add(
             f"  {n:>4}  {entry['wall_median']:>10.3f}  {speedup:>8.2f}  "
-            f"{speedup / n * 100:>9.0f}%  {entry['spread'] * 100:>6.1f}%"
+            f"{speedup / n * 100:>9.0f}%  {entry['spread'] * 100:>6.1f}%  {flag:>7}"
         )
+    for n, entry in sorted(result.get("unreliable", {}).items()):
+        if entry.get("wall_median") is None:
+            add(
+                f"  {n:>4}  {'--':>10}  {'--':>8}  {'--':>10}  {'--':>7}  "
+                f"{entry['failed']}/{entry['reps_total']:<3} every run failed"
+            )
 
     noisy = [n for n in result["points"] if summary[n]["spread"] > 0.15]
     if noisy:
@@ -169,9 +191,19 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
         for n, row in sorted(imbalance["by_n"].items()):
             if n == 1:
                 continue
+            mark = "" if row.get("comparable", True) else "   (saturated)"
             add(
                 f"  {n:>4}  {row['observed']:>9.2f}  {row['achievable']:>9.2f}  "
-                f"{row['lower_bound']:>9.2f}  {row['overhead_vs_lpt']:>8.2f}"
+                f"{row['lower_bound']:>9.2f}  {row['overhead_vs_lpt']:>8.2f}{mark}"
+            )
+        if imbalance.get("rows_dropped"):
+            add(
+                f"  rows past N={imbalance['compared_up_to']:.0f} are marked saturated: "
+                "the cores are full there, so a case no longer runs at the"
+            )
+            add(
+                "  service time measured without contention and the comparison "
+                "says nothing about scheduling."
             )
         if imbalance.get("bound_violated"):
             add("")
