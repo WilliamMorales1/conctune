@@ -1,0 +1,142 @@
+# conctune
+
+Work out how many workers a task should run with, and — more usefully — what
+is stopping it from going faster.
+
+Four stages, each runnable on its own. Both ends are swappable from the CLI:
+`--task` points at any workload spec, `--machine` at any host profile.
+
+```
+machine  ->  task  ->  sweep  ->  model
+ specs      cases      runs     verdict
+```
+
+## Quick start
+
+```sh
+python3 -m conctune auto --task examples/demo.toml
+```
+
+Or stage by stage:
+
+```sh
+python3 -m conctune machine                        # 1. probe the host
+python3 -m conctune task    --task mine.toml       # 2. time each case serially
+python3 -m conctune sweep   --task mine.toml       # 3. run at several N
+python3 -m conctune model   --task mine.toml       # 4. fit and recommend
+```
+
+Artifacts land in `conctune-out/<task name>/`: `machine.json`, `task.json`,
+`runs.csv`, `report.txt`. Every stage reads the previous stage's files, so you
+can re-analyse without re-running anything, or hand-edit a profile and see what
+changes.
+
+## Describing your task
+
+A task is one TOML file. Minimum:
+
+```toml
+name = "mine"
+
+[run]
+cmd = "make -j{j}"      # {j} is replaced with the worker count
+```
+
+That alone gets you the sweep and the USL fit. Adding a `[cases]` section
+unlocks the span ceiling and the load-balance analysis:
+
+```toml
+[cases]
+list    = "./run.py --list"           # one case id per line
+one     = "./run.py --case {case}"    # run exactly one case
+startup = "./run.py --noop"           # boot a worker, do no work (measures B)
+sample  = 0                           # 0 = all cases, N = random sample
+```
+
+`startup` matters more than it looks. Each case is timed in its own process, so
+every measurement carries one boot; without `startup` to subtract it, the work
+total comes out above the CPU time the parallel run actually burns and the
+scheduling bounds land above makespans you already achieved. conctune detects
+that and says so, but measuring it is better.
+
+See `examples/demo.toml` and `examples/demo_workload.py` for a complete worked
+example — a synthetic workload with a deliberate fat case and a switchable
+scheduler, so you can watch each diagnosis fire.
+
+## What it computes
+
+**Three ceilings on useful concurrency.** The smallest one binds, and which one
+binds decides what is worth optimising:
+
+| ceiling | formula | means |
+|---|---|---|
+| startup | `sqrt(work / B)` | worker boot cost, measured directly |
+| overhead | `sqrt((1 - sigma) / kappa)` | USL peak, fitted from the sweep |
+| hardware | `cores * work / cpu_total` | cores already busy (from `/proc/stat`) |
+| parallelism | `work / span` | longest single case; average parallelism |
+
+**A fitted Universal Scalability Law curve.** `S(N) = N / (1 + sigma(N-1) +
+kappa·N(N-1))`, where `sigma` is contention and `kappa` is coherency — the term
+that makes scaling go *retrograde*, so that past `N*` more workers means a
+slower run. Fitted via Gunther's linearising transform plus a Gauss-Newton
+polish, so numpy is the only dependency.
+
+**A load-balance check.** Measured per-case times are fed to a greedy LPT
+schedule; the observed makespan is compared against it (with one worker boot
+added back, since the simulation places work but does not boot anything). If
+the real run trails by more than 25%, scheduling is the problem and the worker
+count is not worth tuning yet — a pull queue fixes it and the curve changes
+shape afterwards.
+
+**A recommendation from the measurements, not the model.** The ceilings are
+estimates; the sweep is ground truth. conctune recommends the cheapest N within
+3% of the fastest measured wall time, then reports the binding ceiling as
+diagnosis alongside it — and flags the disagreement when the two differ.
+
+## Measurement hygiene
+
+Handled for you:
+
+- run order is randomised across the whole (points x repeats) matrix, so
+  thermal drift cannot correlate with the worker count and manufacture fake
+  retrograde scaling;
+- repeats collapse by median, not mean, because a throttling laptop has a long
+  right tail;
+- a warmup run is discarded;
+- CPU time comes from `/proc/stat` deltas, so it counts processes the harness
+  never parented — no GNU time needed;
+- sweep points are chosen dense below the physical core count and sparse out to
+  2x logical, because without points past saturation `kappa` is unidentifiable.
+
+Flagged, not fixed: a busy machine, a ramping frequency governor, turbo boost,
+SMT, and low free memory all distort the curve. The report names each one it
+finds.
+
+## Reading the result
+
+- **R² below 0.90** — the USL does not describe this workload. Usually load
+  imbalance that varies with N, or thermal drift. Fix that before trusting `N*`.
+- **kappa ≈ 0** — no retrograde term; scaling is Amdahl-shaped and the ceiling
+  is `1/sigma`. Sweep further past the core count if you need to pin it down.
+- **fastest point is the largest swept** — the peak may be beyond your range;
+  extend `--points`.
+- **hardware ceiling below the measured optimum** — normal with SMT: the extra
+  threads win sub-linearly. Treat it as a bonus, not headroom.
+
+## Tests
+
+```sh
+python3 tests.py
+```
+
+Recovers known `sigma`/`kappa` from synthetic curves, checks the fit under 2%
+noise, verifies LPT against Graham's 4/3 bound, and confirms the ceilings bind
+in the situations they should.
+
+## Background
+
+Universal Scalability Law: Neil Gunther, *Guerrilla Capacity Planning*.
+Work-span model and the `T_1/N + O(T_inf)` bound: Blumofe & Leiserson, Cilk.
+List-scheduling bound: Graham (1969). Queueing background: Harchol-Balter,
+*Performance Modeling and Design of Computer Systems*. Stragglers: Dean &
+Barroso, "The Tail at Scale".

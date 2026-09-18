@@ -1,0 +1,22 @@
+# Example task spec. Copy this, point the commands at your own workload.
+name = "demo"
+
+[run]
+# {j} is substituted with the worker count. This is the only required field.
+cmd = "python3 examples/demo_workload.py --jobs {j} --schedule pull"
+cwd = ".."           # relative to this file -- here, the repo root
+timeout = 600
+
+[cases]
+# Optional. Supplying these unlocks the span ceiling and the load-balance
+# analysis -- without them conctune can only fit the USL curve.
+list = "python3 examples/demo_workload.py --list"   # one case id per line
+one = "python3 examples/demo_workload.py --case {case}"
+startup = "python3 examples/demo_workload.py --noop" # worker boot, no work
+sample = 0           # 0 = profile every case; N = random sample of N
+
+[sweep]
+points = [1, 2, 3, 4, 6, 8, 12, 16]   # omit to use the machine's suggestion
+repeats = 3
+randomize = true     # shuffle the whole run matrix against thermal drift
+warmup = 1

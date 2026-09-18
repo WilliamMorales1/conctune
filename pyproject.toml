@@ -1,0 +1,16 @@
+[project]
+name = "conctune"
+version = "0.1.0"
+description = "Find the worker count a task should run at, and say what is limiting it"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+[project.scripts]
+conctune = "conctune.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["conctune"]
