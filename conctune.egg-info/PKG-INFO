@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: conctune
+Version: 0.1.0
+Summary: Find the worker count a task should run at, and say what is limiting it
+Requires-Python: >=3.11
+Requires-Dist: numpy>=1.24
