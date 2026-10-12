@@ -1,3 +1,4 @@
 conctune-out/
 __pycache__/
 *.pyc
+*.egg-info/
