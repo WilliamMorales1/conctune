@@ -310,7 +310,7 @@ def _load(logical: int) -> float:
     if sys.platform != "win32":
         try:
             return os.getloadavg()[0]
-        except OSError:
+        except (OSError, AttributeError):  # some POSIX builds lack getloadavg
             return 0.0
     # No load average on Windows: sample busy CPUs over a short window and
     # express it in the same units (runnable CPUs).
