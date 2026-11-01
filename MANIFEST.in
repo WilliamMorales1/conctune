@@ -1,0 +1,5 @@
+graft tests
+graft examples
+graft docs
+graft skills
+global-exclude __pycache__ *.py[co] *.log
