@@ -25,6 +25,7 @@ import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 class TaskError(Exception):
@@ -70,65 +71,118 @@ class TaskSpec:
 
 def load_spec(path: str | os.PathLike) -> TaskSpec:
     path = Path(path).expanduser().resolve()
-    with open(path, "rb") as handle:
-        raw = tomllib.load(handle)
+    try:
+        with open(path, "rb") as handle:
+            raw = tomllib.load(handle)
+    except OSError as error:
+        raise TaskError(f"{path}: {error.strerror}") from None
+    except tomllib.TOMLDecodeError as error:
+        raise TaskError(f"{path}: invalid TOML: {error}") from None
 
-    run = raw.get("run") or {}
-    if not run.get("cmd"):
+    def table(key: str) -> dict:
+        value = raw.get(key, {})
+        if not isinstance(value, dict):
+            raise TaskError(f"{path}: [{key}] must be a table")
+        return value
+
+    def field_of(section: dict, where: str, key: str, kind, default=None) -> Any:
+        value = section.get(key, default)
+        # bool is an int subclass; `repeats = true` is a mistake, not 1.
+        if value is not None and (
+            not isinstance(value, kind)
+            or (kind is not bool and isinstance(value, bool))
+        ):
+            names = (
+                kind.__name__
+                if isinstance(kind, type)
+                else " or ".join(k.__name__ for k in kind)
+            )
+            label = f"[{where}].{key}" if where else key
+            raise TaskError(f"{path}: {label} must be {names}")
+        return value
+
+    run, cases, sweep = table("run"), table("cases"), table("sweep")
+
+    def run_field(key, kind, default=None) -> Any:
+        return field_of(run, "run", key, kind, default)
+
+    def case_field(key, kind, default=None) -> Any:
+        return field_of(cases, "cases", key, kind, default)
+
+    def sweep_field(key, kind, default=None) -> Any:
+        return field_of(sweep, "sweep", key, kind, default)
+
+    run_cmd = run_field("cmd", str)
+    if not run_cmd:
         raise TaskError(f"{path}: [run].cmd is required")
-    if "{j}" not in run["cmd"]:
+    if "{j}" not in run_cmd:
         raise TaskError(
             f"{path}: [run].cmd must contain the placeholder {{j}}, which is "
             "substituted with the worker count"
         )
 
-    cases = raw.get("cases") or {}
-    if bool(cases.get("list")) != bool(cases.get("one")):
-        raise TaskError(
-            f"{path}: [cases].list and [cases].one must be given together"
-        )
-    if cases.get("one") and "{case}" not in cases["one"]:
+    list_cmd = case_field("list", str)
+    one_cmd = case_field("one", str)
+    log_glob = case_field("log", str)
+    case_pattern = case_field("case_pattern", str)
+    boot_pattern = case_field("boot_pattern", str)
+    if bool(list_cmd) != bool(one_cmd):
+        raise TaskError(f"{path}: [cases].list and [cases].one must be given together")
+    if one_cmd and "{case}" not in one_cmd:
         raise TaskError(f"{path}: [cases].one must contain the placeholder {{case}}")
-    if bool(cases.get("log")) != bool(cases.get("case_pattern")):
+    if bool(log_glob) != bool(case_pattern):
         raise TaskError(
             f"{path}: [cases].log and [cases].case_pattern must be given together"
         )
-    if cases.get("case_pattern"):
+    for key, pattern in (
+        ("case_pattern", case_pattern),
+        ("boot_pattern", boot_pattern),
+    ):
+        if not pattern:
+            continue
         try:
-            compiled = re.compile(cases["case_pattern"])
+            compiled = re.compile(pattern)
         except re.error as error:
-            raise TaskError(f"{path}: [cases].case_pattern is not a valid regex: {error}")
-        names = set(compiled.groupindex)
-        if not names & {"ms", "sec", "s"}:
             raise TaskError(
-                f"{path}: [cases].case_pattern needs a named group giving the "
+                f"{path}: [cases].{key} is not a valid regex: {error}"
+            ) from None
+        if not set(compiled.groupindex) & {"ms", "sec", "s"}:
+            raise TaskError(
+                f"{path}: [cases].{key} needs a named group giving the "
                 "duration -- (?P<ms>...), (?P<sec>...) or (?P<s>...)"
             )
 
-    sweep = raw.get("sweep") or {}
-    cwd = Path(run.get("cwd", path.parent)).expanduser()
+    points = sweep_field("points", list, [])
+    if not all(isinstance(p, int) and not isinstance(p, bool) for p in points):
+        raise TaskError(f"{path}: [sweep].points must be a list of integers")
+
+    try:
+        cwd = Path(run_field("cwd", str, str(path.parent))).expanduser()
+    except RuntimeError:
+        raise TaskError(f"{path}: [run].cwd names an unknown home directory") from None
     if not cwd.is_absolute():
         cwd = (path.parent / cwd).resolve()
 
+    timeout = run_field("timeout", (int, float))
     return TaskSpec(
-        name=raw.get("name") or path.stem,
-        run_cmd=run["cmd"],
+        name=field_of(raw, "", "name", str) or path.stem,
+        run_cmd=run_cmd,
         cwd=cwd,
-        env={str(k): str(v) for k, v in (run.get("env") or {}).items()},
-        timeout=run.get("timeout"),
-        shell=bool(run.get("shell", True)),
-        list_cmd=cases.get("list"),
-        one_cmd=cases.get("one"),
-        startup_cmd=cases.get("startup"),
-        sample=int(cases.get("sample", 0)),
-        log_glob=cases.get("log"),
-        case_pattern=cases.get("case_pattern"),
-        boot_pattern=cases.get("boot_pattern"),
-        profile_jobs=int(cases.get("profile_jobs", 1)),
-        points=[int(p) for p in (sweep.get("points") or [])],
-        repeats=int(sweep.get("repeats", 3)),
-        randomize=bool(sweep.get("randomize", True)),
-        warmup=int(sweep.get("warmup", 1)),
+        env={str(k): str(v) for k, v in run_field("env", dict, {}).items()},
+        timeout=None if timeout is None else float(timeout),
+        shell=run_field("shell", bool, True),
+        list_cmd=list_cmd,
+        one_cmd=one_cmd,
+        startup_cmd=case_field("startup", str),
+        sample=case_field("sample", int, 0),
+        log_glob=log_glob,
+        case_pattern=case_pattern,
+        boot_pattern=boot_pattern,
+        profile_jobs=case_field("profile_jobs", int, 1),
+        points=points,
+        repeats=sweep_field("repeats", int, 3),
+        randomize=sweep_field("randomize", bool, True),
+        warmup=sweep_field("warmup", int, 1),
         source=path,
     )
 
@@ -238,15 +292,14 @@ def _cpu_seconds(group: _Cgroup | None) -> float | None:
     return None if jiffies is None else jiffies / _CLK_TCK
 
 
-def run_cmd(
-    cmd: str, spec: TaskSpec, capture: bool = True
-) -> RunResult:
+def run_cmd(cmd: str, spec: TaskSpec, capture: bool = True) -> RunResult:
     env = {**os.environ, **spec.env}
     group = _run_cgroup()
     before = _cpu_seconds(group)
     start = time.perf_counter()
     proc = subprocess.run(
         cmd if spec.shell else shlex.split(cmd),
+        check=False,
         shell=spec.shell,
         cwd=str(spec.cwd),
         env=env,
@@ -276,6 +329,8 @@ def run_cmd(
 
 
 def list_cases(spec: TaskSpec) -> list[str]:
+    if not spec.list_cmd:
+        raise TaskError("[cases].list is not set")
     result = run_cmd(spec.list_cmd, spec)
     if result.returncode != 0:
         raise TaskError(
@@ -296,6 +351,9 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
     done at [cases].profile_jobs workers (1 by default) so the times carry
     no contention from other workers.
     """
+    if not (spec.log_glob and spec.case_pattern):
+        raise TaskError("[cases].log and [cases].case_pattern are not set")
+    log_glob = spec.log_glob
     jobs = max(1, spec.profile_jobs)
     log(f"  profiling run at {jobs} worker(s) to populate the log")
     result = run_cmd(spec.run_cmd.replace("{j}", str(jobs)), spec)
@@ -303,11 +361,12 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
         log(f"  ! profiling run exited {result.returncode}; parsing the log anyway")
 
     pattern = re.compile(spec.case_pattern)
-    paths = sorted(Path(spec.cwd).glob(spec.log_glob)) if not os.path.isabs(
-        spec.log_glob
-    ) else sorted(Path("/").glob(spec.log_glob.lstrip("/")))
+    if os.path.isabs(log_glob):
+        paths = sorted(Path("/").glob(log_glob.lstrip("/")))
+    else:
+        paths = sorted(Path(spec.cwd).glob(log_glob))
     if not paths:
-        raise TaskError(f"[cases].log matched no files: {spec.log_glob}")
+        raise TaskError(f"[cases].log matched no files: {log_glob}")
 
     timings: dict[str, float] = {}
     duplicates = 0
@@ -322,7 +381,8 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
                 continue
             # Case id: every named group but the duration, in pattern order.
             parts = [
-                value for name, value in groups.items()
+                value
+                for name, value in groups.items()
                 if name not in ("ms", "sec", "s") and value
             ]
             case = " ".join(parts).strip() or f"case{len(timings)}"
@@ -352,7 +412,7 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
         "profile_jobs": jobs,
         "profile_wall": result.wall,
         "timings": timings,
-        "invocation_overhead": 0.0,   # the workload timed the work itself
+        "invocation_overhead": 0.0,  # the workload timed the work itself
         "work": sum(values),
         "span": max(values),
         "median": statistics.median(values),
@@ -394,8 +454,10 @@ def _boot_from_log(spec: TaskSpec, paths: list[Path], log=print) -> dict | None:
     if not samples:
         log("  ! [cases].boot_pattern matched nothing; B left to the USL fit")
         return None
-    log(f"  worker boot from log: {len(samples)} sample(s), "
-        f"median {statistics.median(samples):.3f}s")
+    log(
+        f"  worker boot from log: {len(samples)} sample(s), "
+        f"median {statistics.median(samples):.3f}s"
+    )
     return {
         "reps": len(samples),
         "median": statistics.median(samples),
@@ -413,6 +475,9 @@ def profile_cases(spec: TaskSpec, log=print) -> dict:
     """
     if spec.from_log:
         return profile_from_log(spec, log=log)
+    if not spec.one_cmd:
+        raise TaskError("[cases].one is not set")
+    one_cmd = spec.one_cmd
 
     cases = list_cases(spec)
     total = len(cases)
@@ -424,7 +489,7 @@ def profile_cases(spec: TaskSpec, log=print) -> dict:
     timings: dict[str, float] = {}
     failures: list[str] = []
     for index, case in enumerate(sorted(cases), 1):
-        result = run_cmd(spec.one_cmd.replace("{case}", shlex.quote(case)), spec)
+        result = run_cmd(one_cmd.replace("{case}", shlex.quote(case)), spec)
         if result.returncode != 0:
             failures.append(case)
             log(f"  [{index}/{len(cases)}] {case}: FAILED (exit {result.returncode})")
@@ -443,9 +508,7 @@ def profile_cases(spec: TaskSpec, log=print) -> dict:
     # burns, and pushes the scheduling lower bound above makespans that were
     # really achieved.  Net it out when [cases].startup measured it.
     overhead = startup["median"] if startup else 0.0
-    net = {
-        case: max(duration - overhead, 1e-6) for case, duration in timings.items()
-    }
+    net = {case: max(duration - overhead, 1e-6) for case, duration in timings.items()}
 
     gross_values = sorted(timings.values())
     values = sorted(net.values())
@@ -454,17 +517,17 @@ def profile_cases(spec: TaskSpec, log=print) -> dict:
         "cases_measured": len(timings),
         "sampled": bool(spec.sample and spec.sample < total),
         "failures": failures,
-        "timings": net,                  # service times, boot removed
-        "timings_gross": timings,        # as measured, boot included
+        "timings": net,  # service times, boot removed
+        "timings_gross": timings,  # as measured, boot included
         "invocation_overhead": overhead,
-        "work": sum(values),             # T_1  (sum of service times)
+        "work": sum(values),  # T_1  (sum of service times)
         "work_gross": sum(gross_values),
-        "span": max(values),             # T_inf (longest single case)
+        "span": max(values),  # T_inf (longest single case)
         "span_gross": max(gross_values),
         "median": statistics.median(values),
         "mean": statistics.fmean(values),
         "p90": values[max(0, int(0.90 * len(values)) - 1)],
-        "startup": startup,              # B, per-worker boot cost
+        "startup": startup,  # B, per-worker boot cost
     }
 
 

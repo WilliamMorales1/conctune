@@ -1,35 +1,86 @@
 # conctune
 
-Work out how many workers a task should run with, and — more usefully — what
-is stopping it from going faster.
+conctune runs a command at several worker counts, fits the Universal
+Scalability Law to the timings, and tells you the worker count to use plus
+what is stopping the task from going faster: worker startup, coordination
+overhead, the longest single case, or busy cores. Point it at `make -j`,
+`pytest -n`, `xargs -P`, or any command that takes a worker count.
 
-Four stages, each runnable on its own. Both ends are swappable from the CLI:
-`--task` points at any workload spec, `--machine` at any host profile.
+```
+CEILINGS ON USEFUL CONCURRENCY
+  hardware      N <=    4.1   cores * work / cpu_total  <== BINDING
+                at N=4: 4.4s CPU for 4.5s of work (100% of burned cycles useful)
+  startup       N <=    4.3   sqrt(work / B), measured boot cost
+                worker boot B=0.241s against 4.5s of work
+  parallelism   N <=    5.5   work / span
+                work=4.5s, span=0.8s (longest single case is 18.2% of all work)
+  overhead      N <=    6.5   USL peak, sqrt((1-sigma)/kappa)
+                coherency kappa=0.02263, contention sigma=0.0361
+
+========================================================================
+ RECOMMENDED WORKER COUNT: 8
+   cheapest N within 3% of the best measured wall
+========================================================================
+   fastest measured : N=8 at 1.216s (3.17x over serial)
+   knee of the curve: N=4
+   binding constraint: hardware (estimates N <= 4.1)
+```
+
+Requires Linux, Python 3.11+, and numpy. A delegated cgroup v2 (a systemd
+user session gives one) is optional: with it, run CPU counts only the task's
+own processes; without it, conctune falls back to `/proc/stat` and says so.
+
+## Install
+
+From PyPI:
+
+```sh
+pipx install conctune        # or: uv tool install conctune
+```
+
+From source:
+
+```sh
+git clone https://github.com/WilliamMorales1/conctune
+cd conctune
+pipx install .               # or: uv tool install .
+```
+
+Or run it straight from a clone with no install: `python3 -m conctune ...`
+(numpy must be importable).
+
+## Quick start
+
+```sh
+conctune auto --task examples/demo.toml
+```
+
+Or stage by stage:
+
+```sh
+conctune machine                        # 1. probe the host
+conctune task    --task mine.toml       # 2. time each case serially
+conctune sweep   --task mine.toml       # 3. run at several N
+conctune model   --task mine.toml       # 4. fit and recommend
+```
 
 ```
 machine  ->  task  ->  sweep  ->  model
  specs      cases      runs     verdict
 ```
 
-## Quick start
+Both ends are swappable: `--task` points at any workload spec, `--machine` at
+any host profile. Results land in `conctune-out/<task name>/`:
+`machine.json`, `task.json`, `runs.csv`, `report.txt`. Every stage reads the
+previous stage's files, so you can re-analyse without re-running anything, or
+hand-edit a profile and see what changes.
 
-```sh
-python3 -m conctune auto --task examples/demo.toml
-```
-
-Or stage by stage:
-
-```sh
-python3 -m conctune machine                        # 1. probe the host
-python3 -m conctune task    --task mine.toml       # 2. time each case serially
-python3 -m conctune sweep   --task mine.toml       # 3. run at several N
-python3 -m conctune model   --task mine.toml       # 4. fit and recommend
-```
-
-Artifacts land in `conctune-out/<task name>/`: `machine.json`, `task.json`,
-`runs.csv`, `report.txt`. Every stage reads the previous stage's files, so you
-can re-analyse without re-running anything, or hand-edit a profile and see what
-changes.
+Useful flags: `--points 1,2,4,8` and `--repeats N` (sweep, auto) bound the
+cost; `--seed N` makes the run order reproducible; `--no-randomize` (sweep,
+auto) runs in order, which is not advised; `--json` (model, auto) prints a
+machine-readable report on stdout with progress on stderr; `--short` (model,
+auto) prints a one-line verdict such as `N=8 binding=hardware r2=1.00`, then
+one `note:` or `warn:` line each, and still saves the full report.
 
 ## Describing your task
 
@@ -40,10 +91,13 @@ name = "mine"
 
 [run]
 cmd = "make -j{j}"      # {j} is replaced with the worker count
+cwd = "."               # relative to this file; default: the file's directory
+timeout = 900           # seconds per run
 ```
 
-That alone gets you the sweep and the USL fit. Adding a `[cases]` section
-unlocks the span ceiling and the load-balance analysis:
+That alone gets you the sweep, the USL fit, and the hardware ceiling. Adding a
+`[cases]` section unlocks the span ceiling, the startup ceiling, and the
+load-balance analysis:
 
 ```toml
 [cases]
@@ -54,7 +108,7 @@ sample  = 0                           # 0 = all cases, N = random sample
 ```
 
 If the workload already times its own units of work, harvest them from its log
-instead — one run rather than one process per case, and the real times rather
+instead: one run rather than one process per case, and the real times rather
 than reconstructions:
 
 ```toml
@@ -66,8 +120,7 @@ profile_jobs = 1                          # workers for the profiling run
 ```
 
 The pattern needs a named group for the duration (`ms`, `sec` or `s`); every
-other named group is joined to form the case id. `examples/nvim-tests.toml` is
-a working instance of this against a real test suite.
+other named group is joined to form the case id.
 
 `startup` matters more than it looks. Each case is timed in its own process, so
 every measurement carries one boot; without `startup` to subtract it, the work
@@ -75,106 +128,95 @@ total comes out above the CPU time the parallel run actually burns and the
 scheduling bounds land above makespans you already achieved. conctune detects
 that and says so, but measuring it is better.
 
-See `examples/demo.toml` and `examples/demo_workload.py` for a complete worked
-example — a synthetic workload with a deliberate fat case and a switchable
-scheduler, so you can watch each diagnosis fire.
+```toml
+[sweep]
+points = [1, 2, 4, 6, 8, 12, 16]   # omit to use the machine's suggestion
+repeats = 3
+randomize = true                   # shuffle the whole run matrix
+warmup = 1
+```
+
+## Examples
+
+- `examples/demo.toml` with `examples/demo_workload.py`: a synthetic workload
+  with a deliberate fat case, a per-worker boot cost, and a switchable
+  scheduler (`--schedule static|pull`), so you can watch each diagnosis fire.
+  Run it from the repo root: `conctune auto --task examples/demo.toml`.
+- `examples/nvim-tests.toml`: harvests case and boot times from a real test
+  suite's log. Its `cwd` is a placeholder; point it at your own checkout.
+
+## Exit codes
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 1 | nothing to analyse (`model` without sweep data or a successful N=1 run, `task` without `[cases]`), an unwritable `--out`, or not Linux |
+| 2 | task spec error: missing file, invalid TOML, or a bad field; the message names the field |
+| 130 | interrupted |
+
+## How it works
+
+Four ceilings on useful concurrency (startup, overhead, hardware,
+parallelism), the smallest of which binds; a USL fit; a load-balance check
+against a greedy LPT schedule; and a recommendation taken from the
+measurements, not the model. [docs/model.md](docs/model.md) explains each one,
+the measurement hygiene the sweep applies, and how to read the report.
 
 ## For AI agents
 
 `skills/conctune/SKILL.md` is an agent skill: writing a task spec, bounding
-sweep cost, reading the verdict from `model --json`, and what to tell the user
+sweep cost, reading the verdict from `--short` or `--json`, and what to tell the user
 for each binding ceiling. Copy the `skills/conctune` folder into an agent's
 skills directory (for Claude Code, `~/.claude/skills/`).
 
-## What it computes
+## Development
 
-**Three ceilings on useful concurrency.** The smallest one binds, and which one
-binds decides what is worth optimising:
+Pick one environment manager. Each gives an editable install plus the dev
+tools (pytest, ruff, pyright).
 
-| ceiling | formula | means |
-|---|---|---|
-| startup | `sqrt(work / B)` | worker boot cost, measured directly |
-| overhead | `sqrt((1 - sigma) / kappa)` | USL peak, fitted from the sweep |
-| hardware | `cores * work / cpu_total` | cores already busy (CPU of the run's process tree) |
-| parallelism | `work / span` | longest single case; average parallelism |
-
-**A fitted Universal Scalability Law curve.** `S(N) = N / (1 + sigma(N-1) +
-kappa·N(N-1))`, where `sigma` is contention and `kappa` is coherency — the term
-that makes scaling go *retrograde*, so that past `N*` more workers means a
-slower run. Fitted via Gunther's linearising transform plus a Gauss-Newton
-polish, so numpy is the only dependency.
-
-**A load-balance check.** Measured per-case times are fed to a greedy LPT
-schedule; the observed makespan is compared against it (with one worker boot
-added back, since the simulation places work but does not boot anything). If
-the real run trails by more than 25%, scheduling is the problem and the worker
-count is not worth tuning yet — a pull queue fixes it and the curve changes
-shape afterwards.
-
-**A reliability gate.** Worker counts where the task failed are excluded from
-the recommendation regardless of speed, and reported with their failure rate. A
-run that does not finish is not an optimum, and heavily oversubscribed runs are
-exactly where timing-sensitive workloads start to flake.
-
-**A recommendation from the measurements, not the model.** The ceilings are
-estimates; the sweep is ground truth. conctune recommends the cheapest N within
-3% of the fastest measured wall time, then reports the binding ceiling as
-diagnosis alongside it — and flags the disagreement when the two differ.
-
-## Measurement hygiene
-
-Handled for you:
-
-- run order is randomised across the whole (points x repeats) matrix, so
-  thermal drift cannot correlate with the worker count and manufacture fake
-  retrograde scaling;
-- repeats collapse by median, not mean, because a throttling laptop has a long
-  right tail;
-- a warmup run is discarded;
-- each run starts in its own child cgroup, whose `cpu.stat` counts the whole
-  process tree (forkserver workers and daemons the harness never parented) and
-  nothing else on the machine. Without a delegated cgroup v2 (a systemd user
-  session gives one) it falls back to `/proc/stat` deltas, which count every
-  process, and the report says so;
-- sweep points are chosen dense below the physical core count and sparse out to
-  2x logical, because without points past saturation `kappa` is unidentifiable.
-
-Flagged, not fixed: a busy machine, a ramping frequency governor, turbo boost,
-SMT, and low free memory all distort the curve. The report names each one it
-finds.
-
-## Reading the result
-
-- **R² below 0.90** — the USL does not describe this workload. Usually load
-  imbalance that varies with N, or thermal drift. Fix that before trusting `N*`.
-- **kappa ≈ 0** — no retrograde term; scaling is Amdahl-shaped and the ceiling
-  is `1/sigma`. Sweep further past the core count if you need to pin it down.
-- **fastest point is the largest swept** — the peak may be beyond your range;
-  extend `--points`.
-- **hardware ceiling below the measured optimum** — the ceilings are
-  first-order estimates; workers past them still win, just sub-linearly.
-- **hardware ceiling *above* the core count** — the cases block rather than
-  compute (waiting on I/O, a language server, a subprocess), so oversubscribing
-  pays. The report says by how much.
-- **rows marked `(saturated)` in the balance table** — past the physical core
-  count (further for a workload that blocks) a case no longer runs at its
-  contention-free service time, so the simulated schedule is optimistic there
-  and those rows are excluded from the judgement.
-
-## Tests
+uv (uses the committed `uv.lock`):
 
 ```sh
-python3 tests.py
+uv sync                      # creates .venv with conctune and the dev group
+uv run pytest
+uv run conctune --version
 ```
 
-Recovers known `sigma`/`kappa` from synthetic curves, checks the fit under 2%
-noise, verifies LPT against Graham's 4/3 bound, and confirms the ceilings bind
-in the situations they should.
+conda (or mamba):
 
-## Background
+```sh
+conda create -n conctune -c conda-forge python=3.11 numpy pytest ruff pyright
+conda activate conctune
+pip install -e . --no-deps
+pytest
+```
 
-Universal Scalability Law: Neil Gunther, *Guerrilla Capacity Planning*.
-Work-span model and the `T_1/N + O(T_inf)` bound: Blumofe & Leiserson, Cilk.
-List-scheduling bound: Graham (1969). Queueing background: Harchol-Balter,
-*Performance Modeling and Design of Computer Systems*. Stragglers: Dean &
-Barroso, "The Tail at Scale".
+venv:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate         # fish: . .venv/bin/activate.fish
+pip install -e . pytest ruff pyright
+pytest
+```
+
+Checks CI runs on Python 3.11 to 3.13:
+
+```sh
+ruff check . && ruff format --check .
+pyright
+pytest                       # -m "not slow" skips the end-to-end demo run
+```
+
+The suite recovers known `sigma`/`kappa` from synthetic curves, checks the fit
+under noise, verifies LPT against Graham's 4/3 bound, compares `model` output
+on committed sweep data against a golden report, covers every spec error and
+exit code, and fuzzes the spec loader and log harvester.
+
+Releases: bump `__version__` in `conctune/__init__.py`, then push a matching
+`vX.Y.Z` tag. The release workflow builds, publishes to PyPI, and creates the
+GitHub release.
+
+## License
+
+MIT

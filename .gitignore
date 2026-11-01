@@ -2,3 +2,7 @@ conctune-out/
 __pycache__/
 *.pyc
 *.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/

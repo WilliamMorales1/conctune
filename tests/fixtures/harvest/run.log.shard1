@@ -1,0 +1,6 @@
+worker 1 ready in 120ms
+PASS [core] loads config (35ms)
+PASS [core] keymaps (1.5sec)
+FAIL [lsp] attaches (2s)
+noise line that matches nothing
+PASS [core] loads config (40ms)

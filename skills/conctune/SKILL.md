@@ -5,9 +5,9 @@ description: Find the worker count a parallel task should run at, and what limit
 
 # conctune
 
-conctune runs a command at several worker counts, fits the Universal Scalability Law to the timings, and reports the cheapest worker count within 3% of the fastest measured run plus the ceiling that limits scaling (startup, overhead, parallelism, or hardware). Linux only: it reads `/proc` and `/sys`.
+conctune runs a command at several worker counts, fits the Universal Scalability Law to the timings, and reports the cheapest worker count within 3% of the fastest measured run plus the ceiling that limits scaling (startup, overhead, parallelism, or hardware). Linux only: it reads `/proc`, `/sys`, and cgroup v2.
 
-Run it as `conctune` if installed, otherwise `python3 -m conctune` from the repo root.
+Run it as `conctune` if installed (`pipx install conctune` or `uv tool install conctune`), otherwise `python3 -m conctune` from the repo root.
 
 ## Workflow
 
@@ -17,10 +17,20 @@ Run it as `conctune` if installed, otherwise `python3 -m conctune` from the repo
 4. Run all stages. The sweep can take minutes, so run it in the background and wait for it to exit:
 
 ```sh
-conctune auto --task NAME.toml --seed 0
+conctune auto --task NAME.toml --seed 0 --short
 ```
 
-5. Read the verdict as JSON. `auto --json` prints only the report on stdout (progress goes to stderr); `model --json` re-analyses the saved runs without running anything:
+5. Read the verdict. `--short` prints only the verdict on stdout (progress goes to stderr) and still saves the full report:
+
+```
+N=8 binding=hardware r2=0.98 scheduling_suspect unreliable=16 work_overstated
+note: the fastest point is the largest swept (N=8); the peak may lie beyond it -- extend --points and re-run
+warn: turbo boost is on -- ...
+```
+
+The first line is `N=<recommended> binding=<ceiling> r2=<fit R^2>`, followed by flags only when they apply: `scheduling_suspect`, `unreliable=<worker counts>`, `work_overstated`. Each `note:` line comes from the recommendation and each `warn:` line from the machine probe; pass both on. `conctune model --task NAME.toml --short` re-analyses the saved runs without running anything.
+
+For ceiling values and details, use JSON instead (`--json` on `auto` or `model`):
 
 ```sh
 conctune model --task NAME.toml --json | jq '.analysis | {
@@ -82,7 +92,7 @@ Without `startup`, each case time includes one boot, so total work is overstated
 | `parallelism` | the longest case sets a floor | split the fat cases, or schedule them first |
 | `hardware` | cores are busy with useful work | more workers will not help; make each case cheaper |
 
-Before reporting, check these and pass them on:
+Before reporting, check these and pass them on (in `--short` output they are the flags and `note:` lines):
 
 - `recommended_n.notes`: read every note. "fastest point is the largest swept" means rerun with larger `--points`.
 - `fit.r2` below 0.90: the USL does not describe this workload, so trust the measured table, not `n_star`.
@@ -95,7 +105,7 @@ Before reporting, check these and pass them on:
 
 - Keep the machine otherwise idle during the sweep; do not build or test anything else alongside it.
 - Machine warnings in the report (busy machine, powersave governor, turbo, low memory) distort the curve. Pass them on.
-- Pass `--seed` so a rerun uses the same run order.
+- Pass `--seed` so a rerun uses the same run order. Keep run order randomised (do not pass `--no-randomize`) so thermal drift does not fake retrograde scaling.
 - Re-analyse without rerunning: `conctune model --task NAME.toml`. Rerun only `sweep` after changing points: `conctune sweep --task NAME.toml --points 1,4,8,16,24`, then `model`.
 
 ## Errors
@@ -103,8 +113,8 @@ Before reporting, check these and pass them on:
 | Exit | Cause |
 | --- | --- |
 | 0 | success |
-| 1 | no sweep data or no successful N=1 run (`model`), or no `[cases]` (`task`) |
-| 2 | spec error: the message names the field, e.g. `[run].cmd must contain the placeholder {j}` |
+| 1 | no sweep data or no successful N=1 run (`model`), no `[cases]` (`task`), an unwritable `--out`, or not Linux |
+| 2 | spec error: missing file, invalid TOML, or a bad field; the message names the field, e.g. `[run].cmd must contain the placeholder {j}` |
 | 130 | interrupted |
 
 `[cases].case_pattern matched nothing` prints the log's first line: fix the regex against it. Test it with `grep -P` on the log before rerunning.

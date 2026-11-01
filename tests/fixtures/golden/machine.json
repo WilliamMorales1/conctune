@@ -1,0 +1,44 @@
+{
+  "hostname": "golden-host",
+  "kernel": "6.0.0-generic",
+  "arch": "x86_64",
+  "model": "Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz",
+  "cores_physical": 4,
+  "cores_logical": 8,
+  "threads_per_core": 2,
+  "sockets": 1,
+  "numa_nodes": 1,
+  "mhz_max": 4200.0,
+  "mhz_min": 400.0,
+  "cache": {
+    "L1d cache": "128 KiB (4 instances)",
+    "L1i cache": "128 KiB (4 instances)",
+    "L2 cache": "1 MiB (4 instances)",
+    "L3 cache": "8 MiB (1 instance)"
+  },
+  "governors": [
+    "powersave"
+  ],
+  "turbo": true,
+  "mem_total": 16495083520,
+  "mem_available": 11797581824,
+  "swap_total": 16494096384,
+  "loadavg_1m": 1.87109375,
+  "warnings": [
+    "scaling governor powersave -- frequency ramps with load, so low worker counts run at lower clock and speedup looks inflated; consider 'performance' for the sweep",
+    "turbo boost is on -- single-worker runs boost higher than saturated runs, which understates speedup; randomised run order mitigates but does not remove this",
+    "SMT is on (4 physical / 8 logical) -- expect the speedup curve to bend at N=4, not N=8"
+  ],
+  "suggested_points": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    14,
+    16
+  ]
+}

@@ -174,7 +174,7 @@ def suggested_points(profile: dict) -> list[int]:
 
     n = max(min(physical, 8), 2)
     while n < 2 * logical:
-        n = int(round(n * 1.5))
+        n = round(n * 1.5)
         points.add(min(n, 2 * logical))
     points.add(2 * logical)
 

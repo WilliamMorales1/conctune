@@ -18,6 +18,7 @@ import random
 import sys
 from pathlib import Path
 
+from . import __version__
 from . import machine as machine_mod
 from . import model as model_mod
 from . import report as report_mod
@@ -91,14 +92,18 @@ def cmd_task(args) -> int:
     print()
     print(f"  cases measured : {profile['cases_measured']} of {profile['cases_total']}")
     print(f"  work  T1       : {profile['work']:.2f}s")
-    print(f"  span  Tinf     : {profile['span']:.2f}s "
-          f"({profile['span'] / profile['work'] * 100:.1f}% of all work)")
+    print(
+        f"  span  Tinf     : {profile['span']:.2f}s "
+        f"({profile['span'] / profile['work'] * 100:.1f}% of all work)"
+    )
     print(f"  median case    : {profile['median']:.3f}s   p90 {profile['p90']:.3f}s")
     print(f"  avg parallelism: {profile['work'] / profile['span']:.1f}")
     if profile.get("startup"):
         print(f"  worker startup B: {profile['startup']['median']:.3f}s")
     if profile["failures"]:
-        print(f"  ! {len(profile['failures'])} case(s) failed: {profile['failures'][:5]}")
+        print(
+            f"  ! {len(profile['failures'])} case(s) failed: {profile['failures'][:5]}"
+        )
     print(f"\nwrote {out}")
     return 0
 
@@ -141,7 +146,10 @@ def cmd_model(args) -> int:
 
     runs_path = Path(args.runs) if args.runs else work / "runs.csv"
     if not runs_path.exists():
-        print(f"no sweep data at {runs_path} -- run `conctune sweep` first", file=sys.stderr)
+        print(
+            f"no sweep data at {runs_path} -- run `conctune sweep` first",
+            file=sys.stderr,
+        )
         return 1
 
     machine_path = Path(args.machine) if args.machine else work / "machine.json"
@@ -155,28 +163,36 @@ def cmd_model(args) -> int:
     rows = sweep_mod.read(runs_path)
     summary = sweep_mod.aggregate(rows)
     if 1 not in summary:
-        print("sweep has no successful N=1 baseline; cannot compute speedup", file=sys.stderr)
+        print(
+            "sweep has no successful N=1 baseline; cannot compute speedup",
+            file=sys.stderr,
+        )
         return 1
 
     result = model_mod.analyse(profile, summary, task_profile)
-    name = spec.name if spec else runs_path.parent.name
+    name = spec.name if spec else sweep_mod.task_name(rows) or runs_path.parent.name
 
+    full = report_mod.render(profile, result, summary, name)
     if args.json:
         text = report_mod.render_json(profile, result, summary, name)
+    elif args.short:
+        text = report_mod.render_short(profile, result)
     else:
-        text = report_mod.render(profile, result, summary, name)
+        text = full
     print(text)
 
+    # --short still saves the full report, so the one-liner has something to point at.
     out = work / ("report.json" if args.json else "report.txt")
-    out.write_text(text + "\n")
-    if not args.json:
+    out.write_text((text if args.json else full) + "\n")
+    if not (args.json or args.short):
         print(f"wrote {out}")
     return 0
 
 
 def cmd_auto(args) -> int:
-    # With --json, stdout carries only the report so it can be piped to jq.
-    with contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext():
+    # With --json or --short, stdout carries only the report.
+    quiet = args.json or args.short
+    with contextlib.redirect_stdout(sys.stderr) if quiet else contextlib.nullcontext():
         _auto_stages(args)
     return cmd_model(args)
 
@@ -203,11 +219,15 @@ def _auto_stages(args) -> None:
 
     if args.repeats:
         spec.repeats = args.repeats
+    if args.no_randomize:
+        spec.randomize = False
     points = sweep_mod.plan(
         spec, profile, [int(p) for p in args.points.split(",")] if args.points else None
     )
-    print(f"\nSWEEP -- points {points}, {spec.repeats} repeats "
-          f"({len(points) * spec.repeats} runs)\n")
+    print(
+        f"\nSWEEP -- points {points}, {spec.repeats} repeats "
+        f"({len(points) * spec.repeats} runs)\n"
+    )
     sweep_mod.execute(spec, points, work / "runs.csv")
 
     print()
@@ -225,18 +245,27 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--seed", type=int, help="seed the RNG for reproducible run order")
+    parser.add_argument(
+        "--version", action="version", version=f"conctune {__version__}"
+    )
+    parser.add_argument(
+        "--seed", type=int, help="seed the RNG for reproducible run order"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p, task_required=True):
         # SUPPRESS so a subcommand-level --seed overrides the top-level one
         # without clobbering it when absent.
         p.add_argument(
-            "--seed", type=int, default=argparse.SUPPRESS,
+            "--seed",
+            type=int,
+            default=argparse.SUPPRESS,
             help="seed the RNG for reproducible run order",
         )
         p.add_argument("--task", required=task_required, help="task spec TOML")
-        p.add_argument("--machine", help="machine profile JSON (default: probe this host)")
+        p.add_argument(
+            "--machine", help="machine profile JSON (default: probe this host)"
+        )
         p.add_argument("--out", help="output directory (default: conctune-out/<task>)")
 
     p = sub.add_parser("machine", help="stage 1: probe machine specs")
@@ -253,28 +282,45 @@ def build_parser() -> argparse.ArgumentParser:
     common(p)
     p.add_argument("--points", help="comma-separated worker counts, e.g. 1,2,4,8,16")
     p.add_argument("--repeats", type=int, help="repeats per point")
-    p.add_argument("--no-randomize", action="store_true", help="run in order (not advised)")
+    p.add_argument(
+        "--no-randomize", action="store_true", help="run in order (not advised)"
+    )
     p.set_defaults(func=cmd_sweep)
 
     p = sub.add_parser("model", help="stage 4: fit the model and recommend N")
     common(p, task_required=False)
     p.add_argument("--runs", help="sweep CSV (default: <out>/runs.csv)")
-    p.add_argument("--task-profile", help="case profile JSON (default: <out>/task.json)")
+    p.add_argument(
+        "--task-profile", help="case profile JSON (default: <out>/task.json)"
+    )
     p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument(
+        "--short", action="store_true", help="one-line verdict plus notes, for agents"
+    )
     p.set_defaults(func=cmd_model)
 
     p = sub.add_parser("auto", help="run all four stages")
     common(p)
     p.add_argument("--points", help="comma-separated worker counts")
     p.add_argument("--repeats", type=int, help="repeats per point")
+    p.add_argument(
+        "--no-randomize", action="store_true", help="run in order (not advised)"
+    )
     p.add_argument("--json", action="store_true", help="machine-readable output")
-    p.set_defaults(func=cmd_auto, runs=None, task_profile=None, no_randomize=False)
+    p.add_argument(
+        "--short", action="store_true", help="one-line verdict plus notes, for agents"
+    )
+    p.set_defaults(func=cmd_auto, runs=None, task_profile=None)
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not sys.platform.startswith("linux"):
+        # Every stage reads /proc, /sys or cgroup v2.
+        print(f"conctune: Linux only (this is {sys.platform})", file=sys.stderr)
+        return 1
     if getattr(args, "seed", None) is not None:
         random.seed(args.seed)
     try:
@@ -282,6 +328,10 @@ def main(argv: list[str] | None = None) -> int:
     except task_mod.TaskError as error:
         print(f"task spec error: {error}", file=sys.stderr)
         return 2
+    except OSError as error:
+        where = f": {error.filename}" if error.filename else ""
+        print(f"conctune: {error.strerror or error}{where}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130

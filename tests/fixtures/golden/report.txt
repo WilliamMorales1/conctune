@@ -1,0 +1,71 @@
+========================================================================
+ conctune report -- task 'demo' on golden-host
+========================================================================
+
+MACHINE
+  Intel(R) Core(TM) i7-8650U CPU @ 1.90GHz
+  4 physical / 8 logical cores, 15.4 GiB RAM
+  governor powersave, turbo on
+  ! scaling governor powersave -- frequency ramps with load, so low worker counts run at lower clock and speedup looks inflated; consider 'performance' for the sweep
+  ! turbo boost is on -- single-worker runs boost higher than saturated runs, which understates speedup; randomised run order mitigates but does not remove this
+  ! SMT is on (4 physical / 8 logical) -- expect the speedup curve to bend at N=4, not N=8
+
+WORKLOAD
+  work  T1   = 4.47s  (measured per-case service times)
+  span  Tinf = 0.81s  (18.2% of all work in one case)
+  average parallelism T1/Tinf = 5.5
+
+MEASURED
+     N    wall (s)   speedup  efficiency   spread   failed
+  ----------------------------------------------------------
+     1       3.860      1.00        100%     0.0%        -
+     2       2.077      1.86         93%     0.0%        -
+     4       1.334      2.89         72%     0.0%        -
+     8       1.216      3.17         40%     0.0%        -
+
+UNIVERSAL SCALABILITY LAW
+  sigma (contention) = 0.0361   -> Amdahl ceiling 27.7x
+  kappa (coherency)  = 0.02263
+  N*                 = 6.5
+  peak speedup       = 3.24x
+  R^2                = 1.0000
+
+CEILINGS ON USEFUL CONCURRENCY
+  hardware      N <=    4.1   cores * work / cpu_total  <== BINDING
+                at N=4: 4.4s CPU for 4.5s of work (100% of burned cycles useful)
+  startup       N <=    4.3   sqrt(work / B), measured boot cost  
+                worker boot B=0.241s against 4.5s of work
+  parallelism   N <=    5.5   work / span  
+                work=4.5s, span=0.8s (longest single case is 18.2% of all work)
+  overhead      N <=    6.5   USL peak, sqrt((1-sigma)/kappa)  
+                coherency kappa=0.02263, contention sigma=0.0361
+
+LOAD BALANCE  (observed vs a greedy LPT schedule of the same cases,
+               with one worker boot added back)
+     N   observed   LPT+boot      bound     ratio
+  ------------------------------------------------
+     2       2.08       2.48       2.48      0.84
+     4       1.33       1.41       1.36      0.95
+     8       1.22       1.06       1.06      1.15   (saturated)
+  rows past N=4 are marked saturated: the cores are full there, so a case no longer runs at the
+  service time measured without contention and the comparison says nothing about scheduling.
+
+  ! observed makespan is below the lower bound for these cases, which is impossible -- the service times are overstated.
+    Add [cases].startup to the task spec (or ignore this table); scheduling cannot be judged from it as it stands.
+
+========================================================================
+ RECOMMENDED WORKER COUNT: 8
+   cheapest N within 3% of the best measured wall
+========================================================================
+   fastest measured : N=8 at 1.216s (3.17x over serial)
+   knee of the curve: N=4
+   binding constraint: hardware (estimates N <= 4.1)
+   ! the fastest point is the largest swept (N=8); the peak may lie beyond it -- extend --points and re-run
+   ! the hardware ceiling estimates N<=4.1, below the measured optimum of 8 -- the ceiling is a first-order estimate and the workers past it still win, just sub-linearly
+
+HARDWARE-BOUND -- the cores are already busy doing useful work.
+  - more workers only add context switches and cache pressure
+  - if cases block rather than compute, this ceiling sits above the core count on purpose -- that headroom is the blocked time
+  - the win is in per-case cost now: algorithm, memory traffic, vectorisation
+  - check the roofline before assuming compute rather than memory bandwidth
+

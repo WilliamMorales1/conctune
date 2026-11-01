@@ -1,0 +1,2 @@
+worker 2 ready in 80ms
+PASS [ui] statusline (250ms)

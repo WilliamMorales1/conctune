@@ -22,7 +22,6 @@ import math
 
 import numpy as np
 
-
 # --------------------------------------------------------------------------
 # Universal Scalability Law
 
@@ -77,7 +76,9 @@ def fit_usl(points: list[int], speedup: list[float]) -> dict:
     }
 
 
-def _refine(n, s, sigma: float, kappa: float, iterations: int = 60) -> tuple[float, float]:
+def _refine(
+    n, s, sigma: float, kappa: float, iterations: int = 60
+) -> tuple[float, float]:
     """Gauss-Newton polish on the untransformed residual.
 
     The linearised fit weights large N too heavily because the transform
@@ -102,8 +103,10 @@ def _refine(n, s, sigma: float, kappa: float, iterations: int = 60) -> tuple[flo
         except np.linalg.LinAlgError:
             break
 
-        candidate = (max(0.0, min(1.0, sig + float(step[0]))),
-                     max(0.0, kap + float(step[1])))
+        candidate = (
+            max(0.0, min(1.0, sig + float(step[0]))),
+            max(0.0, kap + float(step[1])),
+        )
         cost = float((residual(*candidate) ** 2).sum())
         if not math.isfinite(cost) or cost >= best_cost - 1e-15:
             break
@@ -177,9 +180,7 @@ def analyse(
     # Worker counts the task did not survive. Faster is irrelevant if the run
     # does not finish, so these are excluded from the recommendation and
     # reported separately.
-    unreliable = {
-        n: e for n, e in summary.items() if e.get("fail_rate", 0.0) > 0.0
-    }
+    unreliable = {n: e for n, e in summary.items() if e.get("fail_rate", 0.0) > 0.0}
 
     baseline = timed[1]["wall_median"]
     speedup = [baseline / timed[n]["wall_median"] for n in points]
@@ -187,7 +188,6 @@ def analyse(
     fit = fit_usl(points, speedup)
 
     cores_physical = machine.get("cores_physical", 1)
-    cores_logical = machine.get("cores_logical", cores_physical)
 
     # --- work and span -----------------------------------------------------
     if task_profile and task_profile.get("timings"):
@@ -284,9 +284,7 @@ def analyse(
 
     recommended = _recommend(timed, points, binding, knee, unreliable=unreliable)
 
-    schedule = (
-        schedule_analysis(service_times, points) if service_times else None
-    )
+    schedule = schedule_analysis(service_times, points) if service_times else None
     # Past saturation a case no longer runs at its contention-free service
     # time, so a simulation built from those times stops being a fair
     # comparison. Up to the core count every worker has its own core; only a
@@ -294,9 +292,7 @@ def analyse(
     # boot and stray load push it under the core count, which would hide the
     # very imbalance this check exists to catch.
     valid_to = cores_physical * max(1.0, blocking_factor or 1.0)
-    imbalance = (
-        _imbalance(summary, schedule, boot, valid_to) if schedule else None
-    )
+    imbalance = _imbalance(summary, schedule, boot, valid_to) if schedule else None
 
     return {
         "points": points,
@@ -352,7 +348,9 @@ def _recommend(
     best_n = min(clean, key=lambda n: summary[n]["wall_median"])
     best_wall = summary[best_n]["wall_median"]
 
-    within = [n for n in clean if summary[n]["wall_median"] <= best_wall * (1 + tolerance)]
+    within = [
+        n for n in clean if summary[n]["wall_median"] <= best_wall * (1 + tolerance)
+    ]
     chosen = min(within)
 
     notes = []
@@ -363,7 +361,8 @@ def _recommend(
         )
         notes.append(f"the task failed at {listed} -- excluded from the choice")
         faster = [
-            n for n, e in unreliable.items()
+            n
+            for n, e in unreliable.items()
             if e.get("wall_median") and e["wall_median"] < best_wall
         ]
         if faster:
@@ -441,22 +440,26 @@ def _imbalance(
     # the same cases by a wide margin at the worker counts that matter.
     interesting = [r for n, r in rows.items() if n > 1 and r["comparable"]]
     worst = max(
-        (r["overhead_vs_lpt"] for r in interesting if math.isfinite(r["overhead_vs_lpt"])),
+        (
+            r["overhead_vs_lpt"]
+            for r in interesting
+            if math.isfinite(r["overhead_vs_lpt"])
+        ),
         default=float("nan"),
     )
 
     # A real run cannot beat the lower bound for its own cases. When it does,
     # the service times are overstated (measurement overhead in s_i), so the
     # comparison says nothing about scheduling.
-    impossible = any(
-        r["observed"] < r["lower_bound"] * 0.95 for r in interesting
-    )
+    impossible = any(r["observed"] < r["lower_bound"] * 0.95 for r in interesting)
 
     return {
         "by_n": rows,
         "worst_overhead_vs_lpt": worst,
         "compared_up_to": valid_to,
-        "rows_dropped": sum(1 for n, r in rows.items() if n > 1 and not r["comparable"]),
+        "rows_dropped": sum(
+            1 for n, r in rows.items() if n > 1 and not r["comparable"]
+        ),
         "bound_violated": impossible,
         "scheduling_suspect": (
             not impossible and math.isfinite(worst) and worst > 1.25

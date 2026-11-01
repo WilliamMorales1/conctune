@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .task import TaskSpec, cpu_source, run_cmd
 
-FIELDS = ["n", "rep", "wall", "cpu", "returncode", "order", "cpu_source"]
+FIELDS = ["n", "rep", "wall", "cpu", "returncode", "order", "cpu_source", "task"]
 
 
 def plan(spec: TaskSpec, machine: dict, points: list[int] | None = None) -> list[int]:
@@ -68,6 +68,7 @@ def execute(
                 "returncode": result.returncode,
                 "order": order,
                 "cpu_source": cpu_source(),
+                "task": spec.name,
             }
         )
 
@@ -96,9 +97,16 @@ def read(path: str | Path) -> list[dict]:
                 "order": int(row.get("order", 0)),
                 # CSVs from before cgroup accounting were all /proc/stat
                 "cpu_source": row.get("cpu_source") or "proc_stat",
+                "task": row.get("task") or "",
             }
             for row in csv.DictReader(handle)
         ]
+
+
+def task_name(rows: list[dict]) -> str | None:
+    """task_name returns the spec name recorded with the runs, if any."""
+    names = {row.get("task") for row in rows} - {None, ""}
+    return names.pop() if len(names) == 1 else None
 
 
 def aggregate(rows: list[dict]) -> dict[int, dict]:
@@ -119,9 +127,16 @@ def aggregate(rows: list[dict]) -> dict[int, dict]:
             # Nothing usable to time, but the failures still matter: a worker
             # count the task cannot survive is not a candidate at any speed.
             summary[n] = {
-                "n": n, "reps": 0, "reps_total": len(group), "failed": failed,
-                "fail_rate": 1.0, "wall_median": None, "wall_min": None,
-                "wall_max": None, "spread": 0.0, "cpu_median": 0.0,
+                "n": n,
+                "reps": 0,
+                "reps_total": len(group),
+                "failed": failed,
+                "fail_rate": 1.0,
+                "wall_median": None,
+                "wall_min": None,
+                "wall_max": None,
+                "spread": 0.0,
+                "cpu_median": 0.0,
                 "cpu_source": group[0]["cpu_source"],
             }
             continue

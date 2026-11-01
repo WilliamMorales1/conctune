@@ -10,6 +10,8 @@ name = "nvim-tests"
 
 [run]
 cmd = "NVIM_TEST_JOBS={j} ./test/run.sh /tmp/conctune-nvim.log"
+# Placeholder: point at a Neovim config whose test/run.sh takes NVIM_TEST_JOBS
+# and writes one log shard per worker. "~" is expanded.
 cwd = "~/.config/nvim"
 timeout = 1800
 

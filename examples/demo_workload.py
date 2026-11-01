@@ -14,7 +14,6 @@ the load-balance analysis has something to catch.
 
 import argparse
 import hashlib
-import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -52,7 +51,7 @@ _booted = False
 
 def _worker(case: str):
     global _booted
-    if not _booted:          # once per process, like a real import cost
+    if not _booted:  # once per process, like a real import cost
         boot()
         _booted = True
     return run_case(case)

@@ -10,8 +10,10 @@ RULE = "-" * 72
 
 ADVICE = {
     "startup": (
-        "STARTUP-BOUND -- measured worker boot cost B dominates: past "
-        "sqrt(work/B) workers, booting them costs more than they save.",
+        (
+            "STARTUP-BOUND -- measured worker boot cost B dominates: past "
+            "sqrt(work/B) workers, booting them costs more than they save."
+        ),
         [
             "pool and reuse workers instead of booting one per batch",
             "move imports, model loads and connection setup out of the per-worker path",
@@ -20,23 +22,31 @@ ADVICE = {
         ],
     ),
     "overhead": (
-        "OVERHEAD-BOUND -- worker startup and coordination grow with N and "
-        "eventually beat the work you are splitting.",
+        (
+            "OVERHEAD-BOUND -- worker startup and coordination grow with N and "
+            "eventually beat the work you are splitting."
+        ),
         [
             "pool and reuse workers instead of spawning per batch",
-            "move one-time setup (imports, model loads, connections) out of the "
-            "worker and into shared or inherited state",
+            (
+                "move one-time setup (imports, model loads, connections) out of the "
+                "worker and into shared or inherited state"
+            ),
             "batch small cases together so each worker boot amortises over more work",
             "adding workers past the peak makes the run SLOWER, not just flat",
         ],
     ),
     "parallelism": (
-        "PARALLELISM-BOUND -- the longest single case sets a floor no worker "
-        "count can go under (makespan >= span).",
+        (
+            "PARALLELISM-BOUND -- the longest single case sets a floor no worker "
+            "count can go under (makespan >= span)."
+        ),
         [
             "split the fat cases; that is the only move that raises this ceiling",
-            "if the fat cases cannot be split, schedule them first (LPT) so nothing "
-            "waits on them at the end",
+            (
+                "if the fat cases cannot be split, schedule them first (LPT) so nothing "
+                "waits on them at the end"
+            ),
             "this is the classic straggler / tail-at-scale shape",
         ],
     ),
@@ -44,8 +54,10 @@ ADVICE = {
         "HARDWARE-BOUND -- the cores are already busy doing useful work.",
         [
             "more workers only add context switches and cache pressure",
-            "if cases block rather than compute, this ceiling sits above the core "
-            "count on purpose -- that headroom is the blocked time",
+            (
+                "if cases block rather than compute, this ceiling sits above the core "
+                "count on purpose -- that headroom is the blocked time"
+            ),
             "the win is in per-case cost now: algorithm, memory traffic, vectorisation",
             "check the roofline before assuming compute rather than memory bandwidth",
         ],
@@ -119,8 +131,10 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
     # ---- measurements ----------------------------------------------------
     add("")
     add("MEASURED")
-    add(f"  {'N':>4}  {'wall (s)':>10}  {'speedup':>8}  {'efficiency':>10}  "
-        f"{'spread':>7}  {'failed':>7}")
+    add(
+        f"  {'N':>4}  {'wall (s)':>10}  {'speedup':>8}  {'efficiency':>10}  "
+        f"{'spread':>7}  {'failed':>7}"
+    )
     add("  " + RULE[:58])
     for n in result["points"]:
         entry = summary[n]
@@ -152,8 +166,10 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
     if not fit.get("ok"):
         add(f"  not fitted: {fit.get('reason')}")
     else:
-        add(f"  sigma (contention) = {fit['sigma']:.4f}   -> Amdahl ceiling "
-            f"{_fmt(fit['amdahl_ceiling'], 1)}x")
+        add(
+            f"  sigma (contention) = {fit['sigma']:.4f}   -> Amdahl ceiling "
+            f"{_fmt(fit['amdahl_ceiling'], 1)}x"
+        )
         add(f"  kappa (coherency)  = {fit['kappa']:.5f}")
         add(f"  N*                 = {_fmt(fit['n_star'])}")
         add(f"  peak speedup       = {_fmt(fit['peak_speedup'], 2)}x")
@@ -231,7 +247,9 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
             )
         else:
             add("")
-            add("  balance is fine (within 25% of a greedy schedule) -- N is worth tuning.")
+            add(
+                "  balance is fine (within 25% of a greedy schedule) -- N is worth tuning."
+            )
 
     # ---- verdict ---------------------------------------------------------
     add("")
@@ -257,10 +275,14 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
 
     suspect = bool((result.get("imbalance") or {}).get("scheduling_suspect"))
     if suspect:
-        add("   ! load balance is the first problem, not the worker count -- the "
-            "number above")
-        add("     will move once scheduling is fixed. Re-run this after switching "
-            "to a pull queue.")
+        add(
+            "   ! load balance is the first problem, not the worker count -- the "
+            "number above"
+        )
+        add(
+            "     will move once scheduling is fixed. Re-run this after switching "
+            "to a pull queue."
+        )
 
     add("")
     if suspect:
@@ -269,10 +291,14 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
             "count is being used properly."
         )
         for bullet in [
-            "give workers a shared queue they pull from when free, rather than a "
-            "fixed slice assigned up front",
-            "sort cases longest-first onto that queue (LPT); Graham's bound puts "
-            "the result within 4/3 of optimal",
+            (
+                "give workers a shared queue they pull from when free, rather than a "
+                "fixed slice assigned up front"
+            ),
+            (
+                "sort cases longest-first onto that queue (LPT); Graham's bound puts "
+                "the result within 4/3 of optimal"
+            ),
             "only then tune N -- and re-measure, because the curve changes shape",
         ]:
             add(f"  - {bullet}")
@@ -288,6 +314,28 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
 
     add("")
     return "\n".join(out)
+
+
+def render_short(machine: dict, result: dict) -> str:
+    """render_short gives the verdict as one line plus one line per note, for agents."""
+    r2 = result["fit"].get("r2")
+    head = [
+        f"N={result['recommended_n']['n']}",
+        f"binding={result['binding'] or 'none'}",
+        f"r2={r2:.2f}" if r2 is not None and math.isfinite(r2) else "r2=n/a",
+    ]
+    if (result.get("imbalance") or {}).get("scheduling_suspect"):
+        head.append("scheduling_suspect")
+    if result.get("unreliable"):
+        head.append(
+            "unreliable=" + ",".join(str(n) for n in sorted(result["unreliable"]))
+        )
+    if result.get("work_overstated"):
+        head.append("work_overstated")
+    lines = [" ".join(head)]
+    lines += [f"note: {note}" for note in result["recommended_n"]["notes"]]
+    lines += [f"warn: {warning}" for warning in machine.get("warnings", [])]
+    return "\n".join(lines)
 
 
 def render_json(machine: dict, result: dict, summary: dict, task_name: str) -> str:
