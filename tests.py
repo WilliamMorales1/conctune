@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Self-checks: recover known parameters from synthetic data."""
 
+import json
 import math
+import subprocess
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 import numpy as np
 
-from conctune import machine, model
+from conctune import machine, model, task
 
 failures = []
 
@@ -123,6 +128,77 @@ def test_suggested_points_bracket_the_cores():
     )
 
 
+def test_imbalance_checked_on_a_busy_machine():
+    """A low hardware ceiling must not hide a bad schedule at N <= cores."""
+    times = {f"c{i:02d}": 0.1 for i in range(24)}
+    times["c00"], times["c01"] = 0.8, 0.4
+    work = sum(times.values())
+    # Static slices strand workers behind the fat case: ~1.7x a greedy schedule.
+    walls = {1: work + 0.2, 2: 2.6, 4: 2.0}
+    summary = {
+        n: {"n": n, "reps": 1, "wall_median": w, "wall_min": w, "wall_max": w,
+            "spread": 0.0, "cpu_median": 2.5 * work}   # other load inflates CPU
+        for n, w in walls.items()
+    }
+    profile = {"timings": times, "work": work, "span": 0.8,
+               "startup": {"median": 0.2, "measured": True}}
+    result = model.analyse(
+        {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}, summary, profile
+    )
+    imbalance = result["imbalance"]
+    check(
+        "imbalance flagged under a low hardware ceiling",
+        result["ceilings"]["hardware"]["n"] < 2 and imbalance["scheduling_suspect"],
+        f"hardware={result['ceilings']['hardware']['n']:.1f} "
+        f"worst={imbalance['worst_overhead_vs_lpt']}",
+    )
+
+
+def test_cgroup_cpu_ignores_other_load():
+    """Run CPU must count the run's own processes, not a busy neighbour."""
+    if task.cpu_source() != "cgroup":
+        print("SKIP  cgroup cpu accounting  (no delegated cgroup v2)")
+        return
+    spin = "import time\nend = time.time() + {}\nwhile time.time() < end: pass"
+    neighbour = subprocess.Popen([sys.executable, "-c", spin.format(1.5)])
+    try:
+        time.sleep(0.1)
+        spec = task.TaskSpec(name="t", run_cmd="", cwd=Path.cwd(), shell=False)
+        result = task.run_cmd(f"{sys.executable} -c '{spin.format(0.5)}'", spec)
+    finally:
+        neighbour.wait()
+    check(
+        "cgroup cpu ignores a busy neighbour",
+        0.35 < result.cpu < 0.75,
+        f"cpu={result.cpu:.2f}s for 0.5s of spinning",
+    )
+
+
+def test_auto_json_stdout_is_pure_json():
+    """auto --json must leave only the report on stdout, for jq."""
+    with tempfile.TemporaryDirectory() as tmp:
+        spec = Path(tmp) / "t.toml"
+        spec.write_text(
+            'name = "t"\n[run]\ncmd = "true {j}"\n'
+            "[sweep]\npoints = [1, 2]\nrepeats = 1\nwarmup = 0\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-m", "conctune", "auto", "--task", str(spec),
+             "--out", tmp, "--json"],
+            capture_output=True, text=True, check=False,
+        )
+        try:
+            payload = json.loads(proc.stdout)
+            ok = proc.returncode == 0 and "analysis" in payload
+        except json.JSONDecodeError as error:
+            ok, payload = False, error
+        check(
+            "auto --json stdout parses as JSON",
+            ok and "SWEEP" in proc.stderr,
+            f"exit={proc.returncode}" + ("" if ok else f" {payload}"),
+        )
+
+
 for test in [
     test_usl_recovers_parameters,
     test_usl_survives_noise,
@@ -131,6 +207,9 @@ for test in [
     test_span_ceiling_binds_on_a_fat_case,
     test_recommendation_prefers_measurement,
     test_suggested_points_bracket_the_cores,
+    test_imbalance_checked_on_a_busy_machine,
+    test_cgroup_cpu_ignores_other_load,
+    test_auto_json_stdout_is_pure_json,
 ]:
     test()
 

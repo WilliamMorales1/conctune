@@ -13,6 +13,7 @@ swappable.  Two fidelity levels:
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import random
@@ -166,11 +167,83 @@ def _cpu_jiffies() -> float | None:
 _CLK_TCK = os.sysconf("SC_CLK_TCK")
 
 
+class _Cgroup:
+    # Counts only the run's process tree (forkserver workers included), so an
+    # unrelated busy process cannot drag the hardware ceiling down.
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def create(cls) -> _Cgroup | None:
+        try:
+            with open("/proc/self/cgroup") as handle:
+                line = handle.readline().strip()
+            if not line.startswith("0::"):
+                return None
+            path = Path("/sys/fs/cgroup" + line[3:]) / f"conctune-{os.getpid()}"
+            path.mkdir()
+        except OSError:
+            return None
+        group = cls(path)
+        atexit.register(group.remove)
+        if group.usage() is None:
+            return None
+        return group
+
+    def enter(self) -> None:
+        # Runs in the child between fork and exec.
+        with open(self.path / "cgroup.procs", "w") as handle:
+            handle.write("0")
+
+    def usage(self) -> float | None:
+        try:
+            with open(self.path / "cpu.stat") as handle:
+                for line in handle:
+                    key, value = line.split()
+                    if key == "usage_usec":
+                        return int(value) / 1e6
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def remove(self) -> None:
+        try:
+            self.path.rmdir()
+        except OSError:
+            pass  # a daemon the workload left behind still lives in it
+
+
+_cgroup: _Cgroup | None = None
+_cgroup_tried = False
+
+
+def _run_cgroup() -> _Cgroup | None:
+    global _cgroup, _cgroup_tried
+    if not _cgroup_tried:
+        _cgroup_tried = True
+        _cgroup = _Cgroup.create()
+    return _cgroup
+
+
+def cpu_source() -> str:
+    """cpu_source names where run CPU totals come from: 'cgroup' or 'proc_stat'."""
+    return "cgroup" if _run_cgroup() else "proc_stat"
+
+
+def _cpu_seconds(group: _Cgroup | None) -> float | None:
+    if group:
+        return group.usage()
+    jiffies = _cpu_jiffies()
+    return None if jiffies is None else jiffies / _CLK_TCK
+
+
 def run_cmd(
     cmd: str, spec: TaskSpec, capture: bool = True
 ) -> RunResult:
     env = {**os.environ, **spec.env}
-    before = _cpu_jiffies()
+    group = _run_cgroup()
+    before = _cpu_seconds(group)
     start = time.perf_counter()
     proc = subprocess.run(
         cmd if spec.shell else shlex.split(cmd),
@@ -180,13 +253,14 @@ def run_cmd(
         capture_output=capture,
         text=True,
         timeout=spec.timeout,
+        preexec_fn=group.enter if group else None,
     )
     wall = time.perf_counter() - start
-    after = _cpu_jiffies()
+    after = _cpu_seconds(group)
 
     cpu = 0.0
     if before is not None and after is not None:
-        cpu = max(0.0, (after - before) / _CLK_TCK)
+        cpu = max(0.0, after - before)
 
     return RunResult(
         wall=wall,

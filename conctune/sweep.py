@@ -13,9 +13,9 @@ import random
 import statistics
 from pathlib import Path
 
-from .task import TaskSpec, run_cmd
+from .task import TaskSpec, cpu_source, run_cmd
 
-FIELDS = ["n", "rep", "wall", "cpu", "returncode", "order"]
+FIELDS = ["n", "rep", "wall", "cpu", "returncode", "order", "cpu_source"]
 
 
 def plan(spec: TaskSpec, machine: dict, points: list[int] | None = None) -> list[int]:
@@ -67,6 +67,7 @@ def execute(
                 "cpu": round(result.cpu, 6),
                 "returncode": result.returncode,
                 "order": order,
+                "cpu_source": cpu_source(),
             }
         )
 
@@ -93,6 +94,8 @@ def read(path: str | Path) -> list[dict]:
                 "cpu": float(row["cpu"]),
                 "returncode": int(row["returncode"]),
                 "order": int(row.get("order", 0)),
+                # CSVs from before cgroup accounting were all /proc/stat
+                "cpu_source": row.get("cpu_source") or "proc_stat",
             }
             for row in csv.DictReader(handle)
         ]
@@ -119,6 +122,7 @@ def aggregate(rows: list[dict]) -> dict[int, dict]:
                 "n": n, "reps": 0, "reps_total": len(group), "failed": failed,
                 "fail_rate": 1.0, "wall_median": None, "wall_min": None,
                 "wall_max": None, "spread": 0.0, "cpu_median": 0.0,
+                "cpu_source": group[0]["cpu_source"],
             }
             continue
 
@@ -136,5 +140,6 @@ def aggregate(rows: list[dict]) -> dict[int, dict]:
             "wall_max": walls[-1],
             "spread": (walls[-1] - walls[0]) / median if median else 0.0,
             "cpu_median": statistics.median(cpus) if cpus else 0.0,
+            "cpu_source": good[0]["cpu_source"],
         }
     return summary

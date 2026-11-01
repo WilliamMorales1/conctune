@@ -79,6 +79,13 @@ See `examples/demo.toml` and `examples/demo_workload.py` for a complete worked
 example — a synthetic workload with a deliberate fat case and a switchable
 scheduler, so you can watch each diagnosis fire.
 
+## For AI agents
+
+`skills/conctune/SKILL.md` is an agent skill: writing a task spec, bounding
+sweep cost, reading the verdict from `model --json`, and what to tell the user
+for each binding ceiling. Copy the `skills/conctune` folder into an agent's
+skills directory (for Claude Code, `~/.claude/skills/`).
+
 ## What it computes
 
 **Three ceilings on useful concurrency.** The smallest one binds, and which one
@@ -88,7 +95,7 @@ binds decides what is worth optimising:
 |---|---|---|
 | startup | `sqrt(work / B)` | worker boot cost, measured directly |
 | overhead | `sqrt((1 - sigma) / kappa)` | USL peak, fitted from the sweep |
-| hardware | `cores * work / cpu_total` | cores already busy (from `/proc/stat`) |
+| hardware | `cores * work / cpu_total` | cores already busy (CPU of the run's process tree) |
 | parallelism | `work / span` | longest single case; average parallelism |
 
 **A fitted Universal Scalability Law curve.** `S(N) = N / (1 + sigma(N-1) +
@@ -124,8 +131,11 @@ Handled for you:
 - repeats collapse by median, not mean, because a throttling laptop has a long
   right tail;
 - a warmup run is discarded;
-- CPU time comes from `/proc/stat` deltas, so it counts processes the harness
-  never parented — no GNU time needed;
+- each run starts in its own child cgroup, whose `cpu.stat` counts the whole
+  process tree (forkserver workers and daemons the harness never parented) and
+  nothing else on the machine. Without a delegated cgroup v2 (a systemd user
+  session gives one) it falls back to `/proc/stat` deltas, which count every
+  process, and the report says so;
 - sweep points are chosen dense below the physical core count and sparse out to
   2x logical, because without points past saturation `kappa` is unidentifiable.
 
@@ -146,9 +156,10 @@ finds.
 - **hardware ceiling *above* the core count** — the cases block rather than
   compute (waiting on I/O, a language server, a subprocess), so oversubscribing
   pays. The report says by how much.
-- **rows marked `(saturated)` in the balance table** — past core saturation a
-  case no longer runs at its contention-free service time, so the simulated
-  schedule is optimistic there and those rows are excluded from the judgement.
+- **rows marked `(saturated)` in the balance table** — past the physical core
+  count (further for a workload that blocks) a case no longer runs at its
+  contention-free service time, so the simulated schedule is optimistic there
+  and those rows are excluded from the judgement.
 
 ## Tests
 

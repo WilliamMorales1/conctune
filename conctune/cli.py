@@ -13,6 +13,7 @@ to reason about another).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import random
 import sys
 from pathlib import Path
@@ -174,6 +175,13 @@ def cmd_model(args) -> int:
 
 
 def cmd_auto(args) -> int:
+    # With --json, stdout carries only the report so it can be piped to jq.
+    with contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext():
+        _auto_stages(args)
+    return cmd_model(args)
+
+
+def _auto_stages(args) -> None:
     spec = task_mod.load_spec(args.task)
     profile = _load_machine(args)
     work = _workdir(args, spec)
@@ -206,7 +214,6 @@ def cmd_auto(args) -> int:
     args.runs = str(work / "runs.csv")
     args.task_profile = str(work / "task.json")
     args.machine = str(work / "machine.json")
-    return cmd_model(args)
 
 
 # --------------------------------------------------------------------------

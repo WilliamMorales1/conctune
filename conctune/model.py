@@ -222,7 +222,7 @@ def analyse(
             ),
         }
 
-    # --- hardware ceiling from /proc/stat CPU accounting --------------------
+    # --- hardware ceiling from the runs' CPU accounting --------------------
     probe_n = min(points, key=lambda n: abs(n - cores_physical))
     cpu_total = summary[probe_n]["cpu_median"]
     # A ratio above 1 is not an error: it means a second of work costs less
@@ -242,6 +242,11 @@ def analyse(
             detail = (
                 f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work "
                 f"({min(blocking_factor, 1.0) * 100:.0f}% of burned cycles useful)"
+            )
+        if summary[probe_n].get("cpu_source") != "cgroup":
+            detail += (
+                "; CPU from /proc/stat counts every process on the machine, so "
+                "other load lowers this ceiling"
             )
         ceilings["hardware"] = {
             "n": cores_physical * blocking_factor,
@@ -282,10 +287,13 @@ def analyse(
     schedule = (
         schedule_analysis(service_times, points) if service_times else None
     )
-    # Above the hardware ceiling the machine is saturated, so a case no longer
-    # runs at its contention-free service time and a simulation built from
-    # those times stops being a fair comparison.
-    valid_to = ceilings.get("hardware", {}).get("n", float("inf"))
+    # Past saturation a case no longer runs at its contention-free service
+    # time, so a simulation built from those times stops being a fair
+    # comparison. Up to the core count every worker has its own core; only a
+    # blocking workload fits more. Not the hardware ceiling itself: per-worker
+    # boot and stray load push it under the core count, which would hide the
+    # very imbalance this check exists to catch.
+    valid_to = cores_physical * max(1.0, blocking_factor or 1.0)
     imbalance = (
         _imbalance(summary, schedule, boot, valid_to) if schedule else None
     )
