@@ -48,9 +48,13 @@ def fit_usl(points: list[int], speedup: list[float]) -> dict:
     a, b = float(coeffs[0]), float(coeffs[1])
 
     kappa = max(0.0, b)
-    sigma = max(0.0, a - kappa)
+    # Superlinear data earn a negative sigma [Gunther et al. 2015]; elsewhere it is noise.
+    floor = -math.inf if bool((s[mask] > n[mask]).any()) else 0.0
+    sigma = max(floor, a - kappa)
+    if not _feasible(n, sigma, kappa):
+        sigma = max(0.0, sigma)
 
-    sigma, kappa = _refine(n, s, sigma, kappa)
+    sigma, kappa = _refine(n, s, sigma, kappa, floor)
 
     fitted = usl(n, sigma, kappa)
     residual = s - fitted
@@ -76,8 +80,12 @@ def fit_usl(points: list[int], speedup: list[float]) -> dict:
     }
 
 
+def _feasible(n, sigma: float, kappa: float) -> bool:
+    return bool((1.0 + sigma * (n - 1.0) + kappa * n * (n - 1.0) > 0).all())
+
+
 def _refine(
-    n, s, sigma: float, kappa: float, iterations: int = 60
+    n, s, sigma: float, kappa: float, floor: float = 0.0, iterations: int = 60
 ) -> tuple[float, float]:
     """Gauss-Newton polish on the untransformed residual.
 
@@ -104,9 +112,11 @@ def _refine(
             break
 
         candidate = (
-            max(0.0, min(1.0, sig + float(step[0]))),
+            max(floor, min(1.0, sig + float(step[0]))),
             max(0.0, kap + float(step[1])),
         )
+        if not _feasible(n, *candidate):
+            break
         cost = float((residual(*candidate) ** 2).sum())
         if not math.isfinite(cost) or cost >= best_cost - 1e-15:
             break

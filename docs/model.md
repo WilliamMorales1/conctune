@@ -25,14 +25,16 @@ state-dependent service [Gunther 2008]. `sigma` is the serial fraction Amdahl
 describes; critical sections behave like a serial part plus a parallel part,
 which is why lock contention shows up there too [Eyerman & Eeckhout 2010]. A
 negative `sigma` is the signature of superlinear speedup (caches that grow with
-N); the USL still fits it, and still predicts a retrograde payback later
-[Gunther et al. 2015].
+N). conctune lets `sigma` go negative only when a measured speedup beats N,
+and with `kappa > 0` the USL predicts the payback: speedup falls back below N
+past `N = -sigma / kappa`, then goes retrograde [Gunther et al. 2015].
 
 The parallelism ceiling is the work-span bound: no scheduler finishes faster
-than `max(T_1/N, T_inf)`, and a greedy work-stealing one gets within a constant
-of it [Blumofe & Leiserson 1999]. The usual rule "one worker per core" fails in
-both directions; measured best thread counts on a 24-core machine ranged from 16
-to 63 [Pusukuri et al. 2011], which is why conctune sweeps instead of assuming.
+than `max(T_1/N, T_inf)`, and randomised work stealing finishes in expected
+`T_1/N + O(T_inf)`, within a constant factor of it [Blumofe & Leiserson 1999].
+The usual rule "one worker per core" fails in both directions; measured best
+thread counts on a 24-core machine ranged from 16 to 63 [Pusukuri et al.
+2011], which is why conctune sweeps instead of assuming.
 
 **A load-balance check.** Measured per-case times are fed to a greedy LPT
 schedule; the observed makespan is compared against it (with one worker boot
@@ -176,6 +178,8 @@ finds.
   imbalance that varies with N, or thermal drift. Fix that before trusting `N*`.
 - **kappa ≈ 0** — no retrograde term; scaling is Amdahl-shaped and the ceiling
   is `1/sigma`. Sweep further past the core count if you need to pin it down.
+- **sigma < 0** — superlinear speedup, usually per-worker caches or memory
+  that grow with N. The report gives the payback point `-sigma / kappa`.
 - **fastest point is the largest swept** — the peak may be beyond your range;
   extend `--points`.
 - **hardware ceiling below the measured optimum** — the ceilings are

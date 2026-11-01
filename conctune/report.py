@@ -185,6 +185,17 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
                 "Usually load imbalance that varies with N, or thermal drift. "
                 "Fix scheduling and re-run before trusting N*."
             )
+        if fit["sigma"] < 0:
+            crossover = (
+                f"past N = {-fit['sigma'] / fit['kappa']:.1f}"
+                if fit["kappa"] > 0
+                else "once kappa shows up"
+            )
+            add(
+                "  note: sigma < 0, superlinear speedup (usually per-worker caches "
+                "or memory that grow with N). It pays back "
+                f"{crossover}, where speedup drops below N."
+            )
         if fit["kappa"] < 1e-6:
             add(
                 "  note: kappa ~ 0, no retrograde term. Scaling is Amdahl-shaped; "

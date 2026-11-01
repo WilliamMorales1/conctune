@@ -41,6 +41,26 @@ def test_amdahl_limit():
     assert fit["amdahl_ceiling"] == pytest.approx(25.0, abs=0.5)
 
 
+def test_superlinear_fit_keeps_negative_sigma():
+    """Gunther et al. 2015 fit Hadoop with sigma < 0; clamping it would bias kappa."""
+    points = [1, 2, 4, 8, 16, 32, 48, 64, 96, 128, 150]
+    sigma, kappa = -0.0288, 0.000447
+    fit = model.fit_usl(points, list(model.usl(points, sigma, kappa)))
+    assert fit["sigma"] == pytest.approx(sigma, abs=1e-6)
+    assert fit["kappa"] == pytest.approx(kappa, abs=1e-7)
+    assert fit["n_star"] == pytest.approx(math.sqrt((1 - sigma) / kappa), abs=1e-2)
+    assert math.isinf(fit["amdahl_ceiling"])
+
+
+def test_sublinear_fit_never_goes_negative():
+    rng = np.random.default_rng(3)
+    points = [1, 2, 4, 8]
+    for _ in range(30):
+        noisy = model.usl(points, 0.0, 0.02) * (1 + rng.normal(0, 0.03, len(points)))
+        noisy = np.minimum(noisy, points)
+        assert model.fit_usl(points, list(noisy))["sigma"] >= 0
+
+
 def test_lpt_beats_roundrobin_and_respects_span():
     times = [10.0] + [1.0] * 12
     lpt = model.lpt_makespan(times, 4)
