@@ -21,11 +21,14 @@ import re
 import shlex
 import statistics
 import subprocess
+import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from . import machine
 
 
 class TaskError(Exception):
@@ -218,9 +221,6 @@ def _cpu_jiffies() -> float | None:
     return sum(values) - idle
 
 
-_CLK_TCK = os.sysconf("SC_CLK_TCK")
-
-
 class _Cgroup:
     # Counts only the run's process tree (forkserver workers included), so an
     # unrelated busy process cannot drag the hardware ceiling down.
@@ -281,30 +281,58 @@ def _run_cgroup() -> _Cgroup | None:
 
 
 def cpu_source() -> str:
-    """cpu_source names where run CPU totals come from: 'cgroup' or 'proc_stat'."""
-    return "cgroup" if _run_cgroup() else "proc_stat"
+    """cpu_source names where run CPU totals come from.
+
+    'cgroup' or 'proc_stat' on Linux, 'system_times' on Windows, and 'rusage'
+    elsewhere.
+    """
+    if sys.platform.startswith("linux"):
+        return "cgroup" if _run_cgroup() else "proc_stat"
+    return "system_times" if sys.platform == "win32" else "rusage"
 
 
 def _cpu_seconds(group: _Cgroup | None) -> float | None:
     if group:
         return group.usage()
+    if sys.platform == "win32":
+        times = machine.system_cpu_times()
+        return None if times is None else times[0]
+    if not sys.platform.startswith("linux"):
+        import resource
+
+        # Counts the run's whole process tree, as long as each process was
+        # waited for; a daemon that detaches is missed.
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return usage.ru_utime + usage.ru_stime
     jiffies = _cpu_jiffies()
-    return None if jiffies is None else jiffies / _CLK_TCK
+    return None if jiffies is None else jiffies / os.sysconf("SC_CLK_TCK")
+
+
+def quote(arg: str) -> str:
+    """quote makes arg one word for the platform's shell."""
+    if sys.platform == "win32":
+        return subprocess.list2cmdline([arg])
+    return shlex.quote(arg)
 
 
 def run_cmd(cmd: str, spec: TaskSpec, capture: bool = True) -> RunResult:
     env = {**os.environ, **spec.env}
-    group = _run_cgroup()
+    # {python} lets one spec run under whatever interpreter conctune runs
+    # under; `python3` is not on PATH on stock Windows.
+    cmd = cmd.replace("{python}", quote(sys.executable))
+    group = _run_cgroup() if sys.platform.startswith("linux") else None
     before = _cpu_seconds(group)
     start = time.perf_counter()
     proc = subprocess.run(
-        cmd if spec.shell else shlex.split(cmd),
+        # Windows takes a command line, not argv, so no splitting there.
+        cmd if spec.shell or sys.platform == "win32" else shlex.split(cmd),
         check=False,
         shell=spec.shell,
         cwd=str(spec.cwd),
         env=env,
         capture_output=capture,
         text=True,
+        errors="replace",
         timeout=spec.timeout,
         preexec_fn=group.enter if group else None,
     )
@@ -362,7 +390,8 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
 
     pattern = re.compile(spec.case_pattern)
     if os.path.isabs(log_glob):
-        paths = sorted(Path("/").glob(log_glob.lstrip("/")))
+        anchor = Path(log_glob).anchor
+        paths = sorted(Path(anchor).glob(log_glob[len(anchor) :]))
     else:
         paths = sorted(Path(spec.cwd).glob(log_glob))
     if not paths:
@@ -371,7 +400,7 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
     timings: dict[str, float] = {}
     duplicates = 0
     for path in paths:
-        for line in path.read_text(errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             match = pattern.search(line)
             if not match:
                 continue
@@ -434,7 +463,7 @@ def _duration(groups: dict[str, str]) -> float | None:
 
 
 def _first_line(path: Path) -> str:
-    text = path.read_text(errors="replace").splitlines()
+    text = path.read_text(encoding="utf-8", errors="replace").splitlines()
     return text[0] if text else "(empty)"
 
 
@@ -445,7 +474,7 @@ def _boot_from_log(spec: TaskSpec, paths: list[Path], log=print) -> dict | None:
     pattern = re.compile(spec.boot_pattern)
     samples = []
     for path in paths:
-        for line in path.read_text(errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             match = pattern.search(line)
             if match:
                 seconds = _duration(match.groupdict())
@@ -489,7 +518,7 @@ def profile_cases(spec: TaskSpec, log=print) -> dict:
     timings: dict[str, float] = {}
     failures: list[str] = []
     for index, case in enumerate(sorted(cases), 1):
-        result = run_cmd(one_cmd.replace("{case}", shlex.quote(case)), spec)
+        result = run_cmd(one_cmd.replace("{case}", quote(case)), spec)
         if result.returncode != 0:
             failures.append(case)
             log(f"  [{index}/{len(cases)}] {case}: FAILED (exit {result.returncode})")
@@ -558,11 +587,11 @@ def measure_startup(spec: TaskSpec, reps: int = 5, log=print) -> dict | None:
 
 def save(profile: dict, path: str | os.PathLike) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
+    with open(path, "w", encoding="utf-8") as handle:
         json.dump(profile, handle, indent=2)
         handle.write("\n")
 
 
 def load(path: str | os.PathLike) -> dict:
-    with open(path) as handle:
+    with open(path, encoding="utf-8") as handle:
         return json.load(handle)

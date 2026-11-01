@@ -3,16 +3,17 @@ name = "demo"
 
 [run]
 # {j} is substituted with the worker count. This is the only required field.
-cmd = "python3 examples/demo_workload.py --jobs {j} --schedule pull"
+# {python} is the interpreter conctune runs under, so this works on Windows too.
+cmd = "{python} examples/demo_workload.py --jobs {j} --schedule pull"
 cwd = ".."           # relative to this file -- here, the repo root
 timeout = 600
 
 [cases]
 # Optional. Supplying these unlocks the span ceiling and the load-balance
 # analysis -- without them conctune can only fit the USL curve.
-list = "python3 examples/demo_workload.py --list"   # one case id per line
-one = "python3 examples/demo_workload.py --case {case}"
-startup = "python3 examples/demo_workload.py --noop" # worker boot, no work
+list = "{python} examples/demo_workload.py --list"   # one case id per line
+one = "{python} examples/demo_workload.py --case {case}"
+startup = "{python} examples/demo_workload.py --noop" # worker boot, no work
 sample = 0           # 0 = profile every case; N = random sample of N
 
 [sweep]

@@ -26,9 +26,19 @@ CEILINGS ON USEFUL CONCURRENCY
    binding constraint: hardware (estimates N <= 4.1)
 ```
 
-Requires Linux, Python 3.11+, and numpy. A delegated cgroup v2 (a systemd
-user session gives one) is optional: with it, run CPU counts only the task's
-own processes; without it, conctune falls back to `/proc/stat` and says so.
+Requires Python 3.11+ and numpy, on Linux, macOS, or Windows. Run CPU, which
+the hardware ceiling rests on, comes from the best source each platform has:
+
+| Platform | CPU source | Counts |
+| --- | --- | --- |
+| Linux, delegated cgroup v2 (a systemd user session gives one) | `cgroup` | the run's process tree only |
+| Linux, no delegation | `proc_stat` | every process on the machine |
+| macOS | `rusage` | the run's process tree, minus processes it detaches |
+| Windows | `system_times` | every process on the machine |
+
+The report says when its source could skew the hardware ceiling. Frequency
+governor and turbo checks are Linux only; on Windows the load figure is CPU
+busy time sampled over half a second, since there is no load average.
 
 ## Install
 
@@ -92,6 +102,7 @@ name = "mine"
 
 [run]
 cmd = "make -j{j}"      # {j} is replaced with the worker count
+                        # {python} with the interpreter running conctune
 cwd = "."               # relative to this file; default: the file's directory
 timeout = 900           # seconds per run
 ```
@@ -144,14 +155,19 @@ warmup = 1
   scheduler (`--schedule static|pull`), so you can watch each diagnosis fire.
   Run it from the repo root: `conctune auto --task examples/demo.toml`.
 - `examples/nvim-tests.toml`: harvests case and boot times from a real test
-  suite's log. Its `cwd` is a placeholder; point it at your own checkout.
+  suite's log. Its `cwd` is a placeholder; point it at your own checkout. Its
+  command uses POSIX shell syntax, so it needs Linux or macOS.
+
+Commands run through the platform shell: `/bin/sh` on Linux and macOS,
+`cmd.exe` on Windows. Write specs in syntax both understand, or keep one spec
+per platform.
 
 ## Exit codes
 
 | Exit | Meaning |
 | --- | --- |
 | 0 | success |
-| 1 | nothing to analyse (`model` without sweep data or a successful N=1 run, `task` without `[cases]`), an unwritable `--out`, or not Linux |
+| 1 | nothing to analyse (`model` without sweep data or a successful N=1 run, `task` without `[cases]`), or an unwritable `--out` |
 | 2 | task spec error: missing file, invalid TOML, or a bad field; the message names the field |
 | 130 | interrupted |
 

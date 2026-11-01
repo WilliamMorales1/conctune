@@ -79,14 +79,14 @@ def execute(
 def write(rows: list[dict], path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as handle:
+    with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(sorted(rows, key=lambda r: (r["n"], r["rep"])))
 
 
 def read(path: str | Path) -> list[dict]:
-    with open(path, newline="") as handle:
+    with open(path, newline="", encoding="utf-8") as handle:
         return [
             {
                 "n": int(row["n"]),

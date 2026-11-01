@@ -1,11 +1,11 @@
 ---
 name: conctune
-description: Find the worker count a parallel task should run at, and what limits its scaling, with the conctune CLI (TOML task spec in, measured sweep and verdict out). Use when asked how many jobs, workers, threads, or shards to use (make -j, pytest -n, xargs -P, a test runner's parallelism), why adding workers stopped helping, or to tune or diagnose concurrency of a command on Linux.
+description: Find the worker count a parallel task should run at, and what limits its scaling, with the conctune CLI (TOML task spec in, measured sweep and verdict out). Use when asked how many jobs, workers, threads, or shards to use (make -j, pytest -n, xargs -P, a test runner's parallelism), why adding workers stopped helping, or to tune or diagnose concurrency of a command on Linux, macOS, or Windows.
 ---
 
 # conctune
 
-conctune runs a command at several worker counts, fits the Universal Scalability Law to the timings, and reports the cheapest worker count within 3% of the fastest measured run plus the ceiling that limits scaling (startup, overhead, parallelism, or hardware). Linux only: it reads `/proc`, `/sys`, and cgroup v2.
+conctune runs a command at several worker counts, fits the Universal Scalability Law to the timings, and reports the cheapest worker count within 3% of the fastest measured run plus the ceiling that limits scaling (startup, overhead, parallelism, or hardware). Runs on Linux, macOS, and Windows; commands go through `/bin/sh` or `cmd.exe`.
 
 Run it as `conctune` if installed (`pipx install conctune` or `uv tool install conctune`), otherwise `python3 -m conctune` from the repo root.
 
@@ -48,7 +48,7 @@ The human report is also saved to `conctune-out/NAME/report.txt`.
 name = "unit-tests"
 
 [run]
-cmd = "pytest -q -n {j}"   # {j} = worker count; required
+cmd = "pytest -q -n {j}"   # {j} = worker count; required. {python} = conctune's interpreter
 cwd = "."                  # relative to this file; default: the file's directory
 timeout = 900              # seconds per run
 env = { PYTHONHASHSEED = "0" }
@@ -99,7 +99,8 @@ Before reporting, check these and pass them on (in `--short` output they are the
 - `imbalance.scheduling_suspect` true: the real run trails a greedy schedule of the same cases by over 25%. A pull queue or longest-first ordering is the fix, and worker count is not worth tuning until then.
 - `unreliable`: worker counts where some runs failed. They are never recommended; report the failure rate, because it often means timing-sensitive tests flake under load.
 - A hardware ceiling above the core count means cases block (I/O, subprocesses), so oversubscribing pays.
-- A hardware ceiling detail ending in "CPU from /proc/stat counts every process on the machine" means no cgroup was available; other load on the machine lowered that ceiling.
+- A hardware ceiling detail ending in "CPU from /proc/stat (or GetSystemTimes) counts every process on the machine" means CPU was measured machine-wide (Linux without a cgroup, or Windows); other load on the machine lowered that ceiling.
+- A detail ending in "CPU from getrusage misses processes the run detaches" (macOS) means daemons the workload spawned went uncounted; the ceiling may read high.
 
 ## Hygiene
 
@@ -113,7 +114,7 @@ Before reporting, check these and pass them on (in `--short` output they are the
 | Exit | Cause |
 | --- | --- |
 | 0 | success |
-| 1 | no sweep data or no successful N=1 run (`model`), no `[cases]` (`task`), an unwritable `--out`, or not Linux |
+| 1 | no sweep data or no successful N=1 run (`model`), no `[cases]` (`task`), or an unwritable `--out` |
 | 2 | spec error: missing file, invalid TOML, or a bad field; the message names the field, e.g. `[run].cmd must contain the placeholder {j}` |
 | 130 | interrupted |
 

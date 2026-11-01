@@ -243,10 +243,17 @@ def analyse(
                 f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work "
                 f"({min(blocking_factor, 1.0) * 100:.0f}% of burned cycles useful)"
             )
-        if summary[probe_n].get("cpu_source") != "cgroup":
+        source = summary[probe_n].get("cpu_source")
+        if source in ("proc_stat", "system_times"):
+            where = "/proc/stat" if source == "proc_stat" else "GetSystemTimes"
             detail += (
-                "; CPU from /proc/stat counts every process on the machine, so "
+                f"; CPU from {where} counts every process on the machine, so "
                 "other load lowers this ceiling"
+            )
+        elif source == "rusage":
+            detail += (
+                "; CPU from getrusage misses processes the run detaches, so "
+                "this ceiling may read high"
             )
         ceilings["hardware"] = {
             "n": cores_physical * blocking_factor,

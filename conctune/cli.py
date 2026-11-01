@@ -183,7 +183,7 @@ def cmd_model(args) -> int:
 
     # --short still saves the full report, so the one-liner has something to point at.
     out = work / ("report.json" if args.json else "report.txt")
-    out.write_text((text if args.json else full) + "\n")
+    out.write_text((text if args.json else full) + "\n", encoding="utf-8")
     if not (args.json or args.short):
         print(f"wrote {out}")
     return 0
@@ -317,10 +317,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not sys.platform.startswith("linux"):
-        # Every stage reads /proc, /sys or cgroup v2.
-        print(f"conctune: Linux only (this is {sys.platform})", file=sys.stderr)
-        return 1
     if getattr(args, "seed", None) is not None:
         random.seed(args.seed)
     try:

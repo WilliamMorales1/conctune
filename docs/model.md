@@ -51,7 +51,9 @@ Handled for you:
   process tree (forkserver workers and daemons the harness never parented) and
   nothing else on the machine. Without a delegated cgroup v2 (a systemd user
   session gives one) it falls back to `/proc/stat` deltas, which count every
-  process, and the report says so;
+  process, and the report says so. macOS uses `getrusage(RUSAGE_CHILDREN)`,
+  which counts the run's tree but misses processes it detaches; Windows uses
+  `GetSystemTimes` deltas, which, like `/proc/stat`, count every process;
 - sweep points are chosen dense below the physical core count and sparse out to
   2x logical, because without points past saturation `kappa` is unidentifiable.
 

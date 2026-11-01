@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from conctune import __version__, cli
+from conctune import __version__
 
 from .conftest import FIXTURES, REPO, run_cli
 
-TRUE_SPEC = 'name = "t"\n[run]\ncmd = "true {j}"\n[sweep]\npoints = [1, 2]\nrepeats = 1\nwarmup = 0\n'
+TRUE_SPEC = 'name = "t"\n[run]\ncmd = "{python} -c pass {j}"\n[sweep]\npoints = [1, 2]\nrepeats = 1\nwarmup = 0\n'
 
 
 def test_exit_0_version():
@@ -49,12 +49,6 @@ def test_unwritable_out_is_one_line(tmp_path):
     assert proc.returncode != 0
     assert proc.stderr.count("\n") == 1
     assert "Traceback" not in proc.stderr
-
-
-def test_non_linux_exits_with_a_message(monkeypatch, capsys):
-    monkeypatch.setattr("sys.platform", "darwin")
-    assert cli.main(["machine"]) == 1
-    assert "Linux only" in capsys.readouterr().err
 
 
 def test_auto_json_stdout_is_pure_json(write_spec, tmp_path):

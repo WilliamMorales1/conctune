@@ -54,7 +54,7 @@ def test_harvester_raises_only_task_error(tmp_path):
         (work / "run.log.shard1").write_text("\n".join(mutated) + "\n")
         spec = task.TaskSpec(
             name="f",
-            run_cmd="true {j}",
+            run_cmd="{python} -c pass {j}",
             cwd=work,
             log_glob="run.log.shard*",
             case_pattern=(

@@ -14,7 +14,7 @@ from conctune import cli, task
 
 from .conftest import FIXTURES
 
-MINIMAL = '[run]\ncmd = "true {j}"\n'
+MINIMAL = '[run]\ncmd = "{python} -c pass {j}"\n'
 
 
 @pytest.mark.parametrize(
@@ -78,7 +78,7 @@ def _harvest_spec(tmp_path: Path, pattern: str = PATTERN, glob: str = "run.log.s
         shutil.copy(path, tmp_path)
     return task.TaskSpec(
         name="h",
-        run_cmd="true {j}",
+        run_cmd="{python} -c pass {j}",
         cwd=tmp_path,
         log_glob=glob,
         case_pattern=pattern,
@@ -103,6 +103,11 @@ def test_harvest_reads_cases_units_and_boot(tmp_path):
     assert profile["startup"]["reps"] == 2
     assert profile["startup"]["median"] == pytest.approx(0.1)
     assert any("1 duplicate case id" in m for m in messages)
+
+
+def test_harvest_absolute_glob(tmp_path):
+    spec = _harvest_spec(tmp_path, glob=str(tmp_path / "run.log.shard*"))
+    assert task.profile_cases(spec, log=lambda _: None)["cases_total"] == 4
 
 
 def test_harvest_reports_a_pattern_that_matches_nothing(tmp_path):
