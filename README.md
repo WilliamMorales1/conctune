@@ -32,10 +32,11 @@ own processes; without it, conctune falls back to `/proc/stat` and says so.
 
 ## Install
 
-From PyPI:
+From GitHub:
 
 ```sh
-pipx install conctune        # or: uv tool install conctune
+pipx install git+https://github.com/WilliamMorales1/conctune
+# or: uv tool install git+https://github.com/WilliamMorales1/conctune
 ```
 
 From source:
@@ -214,8 +215,8 @@ on committed sweep data against a golden report, covers every spec error and
 exit code, and fuzzes the spec loader and log harvester.
 
 Releases: bump `__version__` in `conctune/__init__.py`, then push a matching
-`vX.Y.Z` tag. The release workflow builds, publishes to PyPI, and creates the
-GitHub release.
+`vX.Y.Z` tag. The release workflow builds the sdist and wheel and attaches them
+to a GitHub release.
 
 ## License
 
