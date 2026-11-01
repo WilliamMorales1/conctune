@@ -43,6 +43,9 @@ class TaskSpec:
     env: dict[str, str] = field(default_factory=dict)
     timeout: float | None = None
     shell: bool = True
+    # Kernel threads an M:N runtime multiplexes its tasks onto (1 for an
+    # asyncio or Node event loop, GOMAXPROCS for Go); None means every core.
+    carriers: int | None = None
 
     list_cmd: str | None = None
     one_cmd: str | None = None
@@ -167,6 +170,9 @@ def load_spec(path: str | os.PathLike) -> TaskSpec:
         cwd = (path.parent / cwd).resolve()
 
     timeout = run_field("timeout", (int, float))
+    carriers = run_field("carriers", int)
+    if carriers is not None and carriers < 1:
+        raise TaskError(f"{path}: [run].carriers must be at least 1")
     return TaskSpec(
         name=field_of(raw, "", "name", str) or path.stem,
         run_cmd=run_cmd,
@@ -174,6 +180,7 @@ def load_spec(path: str | os.PathLike) -> TaskSpec:
         env={str(k): str(v) for k, v in run_field("env", dict, {}).items()},
         timeout=None if timeout is None else float(timeout),
         shell=run_field("shell", bool, True),
+        carriers=carriers,
         list_cmd=list_cmd,
         one_cmd=one_cmd,
         startup_cmd=case_field("startup", str),

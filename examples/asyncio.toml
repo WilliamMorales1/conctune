@@ -1,0 +1,29 @@
+# User-level threads: asyncio tasks on one event loop.
+#
+# {j} is the number of tasks in flight, not processes. The loop runs every
+# task on one kernel thread, so the hardware ceiling counts one carrier, not
+# every core. The same shape fits goroutines (carriers = GOMAXPROCS), Java
+# virtual threads (carriers = jdk.virtualThreadScheduler.parallelism), and
+# Node (carriers = 1).
+#
+# Run from the repo root:  conctune auto --task examples/asyncio.toml
+name = "asyncio"
+
+[run]
+cmd = "{python} examples/asyncio_workload.py --jobs {j} --log examples/.asyncio.log"
+cwd = ".."
+timeout = 300
+carriers = 1
+
+[cases]
+# The workload times its own cases, so no per-case process launches.
+log = "examples/.asyncio.log"
+case_pattern = '^(?P<case>case\d+) (?P<ms>[\d.]+)ms'
+
+[sweep]
+# Geometric and far past the core count: a task that mostly waits costs a
+# fraction of a core, so the optimum sits at tens to thousands, not at 4 or 8.
+points = [1, 2, 4, 8, 16, 32, 48, 64, 128, 256]
+repeats = 2
+randomize = true
+warmup = 1

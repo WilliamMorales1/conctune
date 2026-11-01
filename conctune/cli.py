@@ -169,7 +169,9 @@ def cmd_model(args) -> int:
         )
         return 1
 
-    result = model_mod.analyse(profile, summary, task_profile)
+    result = model_mod.analyse(
+        profile, summary, task_profile, carriers=spec.carriers if spec else None
+    )
     name = spec.name if spec else sweep_mod.task_name(rows) or runs_path.parent.name
 
     full = report_mod.render(profile, result, summary, name)

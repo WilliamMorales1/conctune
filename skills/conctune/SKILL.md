@@ -52,11 +52,14 @@ cmd = "pytest -q -n {j}"   # {j} = worker count; required. {python} = conctune's
 cwd = "."                  # relative to this file; default: the file's directory
 timeout = 900              # seconds per run
 env = { PYTHONHASHSEED = "0" }
+carriers = 1               # optional; only for user-level threads, see below
 
 [sweep]                    # optional; omit points to use the machine's suggestion
 points = [1, 2, 4, 6, 8, 12, 16]
 repeats = 3
 ```
+
+For user-level threads (asyncio tasks, goroutines, Java virtual threads, Node), `{j}` is the in-flight task limit and `carriers` is the kernel threads the runtime runs them on: 1 for asyncio and Node, `GOMAXPROCS` for Go, `jdk.virtualThreadScheduler.parallelism` for Java. With it set, the hardware ceiling counts carriers instead of cores, `.analysis.carriers` echoes it, and `.imbalance` is null (the load-balance check does not apply). Sweep geometrically past the core count, e.g. `--points 1,4,16,64,256,1024`.
 
 Start with only `[run]`. That gives the sweep, the USL fit, and the hardware ceiling. Add `[cases]` when the user wants to know why it stops scaling, since it unlocks the parallelism ceiling, the startup ceiling, and the load-balance check. Two ways:
 
@@ -122,4 +125,4 @@ Before reporting, check these and pass them on (in `--short` output they are the
 
 ## Examples
 
-`examples/demo.toml` with `examples/demo_workload.py` is a synthetic workload with a fat case, a per-worker boot cost, and a switchable scheduler (`--schedule static|pull`). `examples/nvim-tests.toml` harvests case and boot times from a real test suite's log; copy it when the workload logs its own times.
+`examples/demo.toml` with `examples/demo_workload.py` is a synthetic workload with a fat case, a per-worker boot cost, and a switchable scheduler (`--schedule static|pull`). `examples/asyncio.toml` sizes asyncio tasks on one event loop (`carriers = 1`); copy it for user-level threads. `examples/nvim-tests.toml` harvests case and boot times from a real test suite's log; copy it when the workload logs its own times.

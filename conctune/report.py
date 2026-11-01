@@ -98,6 +98,11 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
     add("")
     add("WORKLOAD")
     add(f"  work  T1   = {_fmt(result['work'], 2)}s  ({result['work_source']})")
+    if result.get("carriers"):
+        add(
+            f"  runs on {result['carriers']} carrier thread(s) ([run].carriers), "
+            "not every core"
+        )
     if result.get("work_overstated"):
         add(
             "  ! the parallel run burned less CPU than these service times imply, "

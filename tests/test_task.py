@@ -43,6 +43,8 @@ MINIMAL = '[run]\ncmd = "{python} -c pass {j}"\n'
         ('run = "x"\n', "[run]"),
         (MINIMAL + "[sweep]\nrepeats = 'many'\n", "[sweep].repeats"),
         (MINIMAL + "[sweep]\npoints = 4\n", "[sweep].points"),
+        (MINIMAL + "carriers = 0\n", "[run].carriers"),
+        (MINIMAL + "carriers = 'one'\n", "[run].carriers"),
     ],
 )
 def test_spec_errors_exit_2_naming_the_field(write_spec, capsys, body, field):

@@ -129,3 +129,31 @@ def test_imbalance_checked_on_a_busy_machine():
     )
     assert result["ceilings"]["hardware"]["n"] < 2
     assert result["imbalance"]["scheduling_suspect"]
+
+
+def test_carriers_replace_cores_in_the_hardware_ceiling():
+    """An event loop fills one carrier, however many cores the machine has."""
+    times = {f"c{i:02d}": 0.2 for i in range(40)}
+    work = sum(times.values())
+    summary = {
+        n: {
+            "n": n,
+            "reps": 1,
+            "wall_median": max(work / n, 0.4),
+            "wall_min": 0.0,
+            "wall_max": 0.0,
+            "spread": 0.0,
+            "cpu_median": work / 20,  # cases wait 19/20 of the time
+        }
+        for n in [1, 2, 4, 8, 16, 32]
+    }
+    profile = {"timings": times, "work": work, "span": 0.2, "startup": None}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+
+    default = model.analyse(host, summary, profile)
+    loop = model.analyse(host, summary, profile, carriers=1)
+    assert default["ceilings"]["hardware"]["n"] == pytest.approx(80)
+    assert loop["ceilings"]["hardware"]["n"] == pytest.approx(20)
+    assert loop["carriers"] == 1
+    assert default["imbalance"] is not None
+    assert loop["imbalance"] is None

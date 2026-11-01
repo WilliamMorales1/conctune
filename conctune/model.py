@@ -171,6 +171,7 @@ def analyse(
     machine: dict,
     summary: dict[int, dict],
     task_profile: dict | None = None,
+    carriers: int | None = None,
 ) -> dict:
     timed = {n: e for n, e in summary.items() if e.get("wall_median")}
     points = sorted(timed)
@@ -188,6 +189,9 @@ def analyse(
     fit = fit_usl(points, speedup)
 
     cores_physical = machine.get("cores_physical", 1)
+    # An event loop or M:N runtime runs its tasks on fewer kernel threads than
+    # the machine has cores; those threads are the cores it can fill.
+    cores = carriers or cores_physical
 
     # --- work and span -----------------------------------------------------
     if task_profile and task_profile.get("timings"):
@@ -223,7 +227,7 @@ def analyse(
         }
 
     # --- hardware ceiling from the runs' CPU accounting --------------------
-    probe_n = min(points, key=lambda n: abs(n - cores_physical))
+    probe_n = min(points, key=lambda n: abs(n - cores))
     cpu_total = summary[probe_n]["cpu_median"]
     # A ratio above 1 is not an error: it means a second of work costs less
     # than a second of CPU, because cases spend part of their time blocked
@@ -256,8 +260,8 @@ def analyse(
                 "this ceiling may read high"
             )
         ceilings["hardware"] = {
-            "n": cores_physical * blocking_factor,
-            "label": "cores * work / cpu_total",
+            "n": cores * blocking_factor,
+            "label": f"{'carriers' if carriers else 'cores'} * work / cpu_total",
             "detail": detail,
         }
 
@@ -298,11 +302,19 @@ def analyse(
     # blocking workload fits more. Not the hardware ceiling itself: per-worker
     # boot and stray load push it under the core count, which would hide the
     # very imbalance this check exists to catch.
-    valid_to = cores_physical * max(1.0, blocking_factor or 1.0)
-    imbalance = _imbalance(summary, schedule, boot, valid_to) if schedule else None
+    valid_to = cores * max(1.0, blocking_factor or 1.0)
+    # Tasks sharing a carrier wake in bursts and queue for it long before it
+    # is saturated (a convoy): contention the LPT simulation cannot tell from
+    # imbalance, so there is no row it could fairly judge.
+    imbalance = (
+        _imbalance(summary, schedule, boot, valid_to)
+        if schedule and not carriers
+        else None
+    )
 
     return {
         "points": points,
+        "carriers": carriers,
         "speedup": dict(zip(points, speedup)),
         "baseline": baseline,
         "work": work,

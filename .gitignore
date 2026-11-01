@@ -6,3 +6,4 @@ build/
 dist/
 .venv/
 .pytest_cache/
+examples/.asyncio.log

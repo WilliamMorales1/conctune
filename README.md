@@ -105,7 +105,18 @@ cmd = "make -j{j}"      # {j} is replaced with the worker count
                         # {python} with the interpreter running conctune
 cwd = "."               # relative to this file; default: the file's directory
 timeout = 900           # seconds per run
+carriers = 1            # optional: kernel threads an M:N runtime runs on
 ```
+
+`{j}` need not be a process or kernel-thread count. For asyncio tasks,
+goroutines, Java virtual threads, or Node promises, make it the number of tasks
+in flight (a semaphore or pool size) and set `carriers` to the kernel threads
+the runtime multiplexes them onto: 1 for asyncio and Node, `GOMAXPROCS` for Go,
+`jdk.virtualThreadScheduler.parallelism` for Java. The hardware ceiling then
+counts carriers instead of cores, and the load-balance check is skipped, since
+tasks sharing a carrier queue for it in bursts that the check would misread as
+imbalance. Sweep geometrically and far past the core count: a task that mostly
+waits costs a fraction of a core. See [docs/model.md](docs/model.md#user-level-and-virtual-threads).
 
 That alone gets you the sweep, the USL fit, and the hardware ceiling. Adding a
 `[cases]` section unlocks the span ceiling, the startup ceiling, and the
@@ -154,6 +165,10 @@ warmup = 1
   with a deliberate fat case, a per-worker boot cost, and a switchable
   scheduler (`--schedule static|pull`), so you can watch each diagnosis fire.
   Run it from the repo root: `conctune auto --task examples/demo.toml`.
+- `examples/asyncio.toml` with `examples/asyncio_workload.py`: user-level
+  threads, asyncio tasks on one event loop (`carriers = 1`). Each task waits
+  on a simulated remote call, then computes on the loop, so the optimum is set
+  by the wait-to-compute ratio, not the core count. Takes about three minutes.
 - `examples/nvim-tests.toml`: harvests case and boot times from a real test
   suite's log. Its `cwd` is a placeholder; point it at your own checkout. Its
   command uses POSIX shell syntax, so it needs Linux or macOS.
