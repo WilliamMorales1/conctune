@@ -38,7 +38,10 @@ thread counts on a 24-core machine ranged from 16 to 63 [Pusukuri et al.
 
 **A load-balance check.** Measured per-case times are fed to a greedy LPT
 schedule; the observed makespan is compared against it (with one worker boot
-added back, since the simulation places work but does not boot anything). If
+added back, since the simulation places work but does not boot anything, and
+stretched by the run's CPU growth over N=1: idle workers burn no CPU, so CPU
+that grows with N means every case ran slower, as when the clock drops under
+load, rather than work sitting unassigned). If
 the real run trails by more than 25%, scheduling is the problem and the worker
 count is not worth tuning yet — a pull queue fixes it and the curve changes
 shape afterwards. LPT is never worse than `4/3 - 1/(3N)` times the optimal
@@ -89,6 +92,14 @@ is `(W + C) / C`. The only change for user-level threads is the multiplier:
 set `[run].carriers` and it counts carriers, not cores. Without it an asyncio
 service on a 4-core laptop would be told it can use four times the concurrency
 its single loop can actually feed.
+
+`cpu_total` is read at the worker count nearest the core (or carrier) count,
+then, for blocking work, at the count nearest the ceiling it implies, until the
+two agree. A run far below saturation burns more CPU per case (idle wake-ups, a
+clock that never ramps up), so reading it there would understate how many
+blocking tasks fit. When per-case times sum to more than 1.25x the whole N=1
+run, they carry costs the real run never pays, so the N=1 wall time stands in
+for `work` and the report flags `work_overstated`.
 
 **The downstream binds before the threads do.** Because a virtual thread costs
 almost nothing, the old reason to cap concurrency, thread cost, is gone. JEP

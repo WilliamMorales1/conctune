@@ -177,3 +177,87 @@ def test_carriers_replace_cores_in_the_hardware_ceiling():
     assert loop["carriers"] == 1
     assert default["imbalance"] is not None
     assert loop["imbalance"] is None
+
+
+def _summary(walls: dict[int, float], cpus: dict[int, float]) -> dict[int, dict]:
+    return {
+        n: {
+            "n": n,
+            "reps": 3,
+            "wall_median": w,
+            "wall_min": w,
+            "wall_max": w,
+            "spread": 0.0,
+            "cpu_median": cpus[n],
+        }
+        for n, w in walls.items()
+    }
+
+
+def test_blocking_hardware_ceiling_reads_cpu_near_saturation():
+    """Latency-bound work burns more CPU per run far below saturation."""
+    # A Go fetcher on GOMAXPROCS=2 that sleeps 15ms per request, measured.
+    walls = {1: 4.912, 16: 0.390, 32: 0.213, 64: 0.120, 96: 0.101, 128: 0.111}
+    cpus = {1: 0.386, 16: 0.298, 32: 0.173, 64: 0.107, 96: 0.110, 128: 0.146}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), None, carriers=2)
+    # Read at N=1 the ceiling was 2 * 4.912 / 0.386 = 25, a quarter of the peak.
+    assert result["ceilings"]["hardware"]["n"] > 64
+    assert "at N=96" in result["ceilings"]["hardware"]["detail"]
+
+
+def test_cpu_bound_hardware_ceiling_stays_at_the_cores():
+    walls = {1: 8.0, 2: 4.48, 4: 2.57, 8: 2.44, 16: 2.65}
+    cpus = {1: 7.94, 2: 8.83, 4: 9.90, 8: 18.35, 16: 18.2}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), None)
+    assert result["ceilings"]["hardware"]["n"] == pytest.approx(4 * 8.0 / 9.90)
+
+
+def _build_profile() -> dict:
+    # A make -j build: 24 compile units plus a near-free link.
+    times = {f"u{i:02d}": 0.31 for i in range(24)}
+    times["main"] = 0.01
+    work = sum(times.values())
+    return {
+        "timings": times,
+        "work": work,
+        "span": 0.31,
+        "startup": {"median": 0.02, "measured": True},
+    }
+
+
+def test_clock_drop_under_load_is_not_imbalance():
+    """make -j already pulls work; slower cases at N=4 are the clock, not idle workers."""
+    profile = _build_profile()
+    walls = {1: 7.6, 2: 4.2, 3: 2.95, 4: 2.5}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    # CPU grows with N by as much as the wall trails the greedy schedule.
+    slowed = model.analyse(
+        host, _summary(walls, {1: 7.5, 2: 8.3, 3: 8.7, 4: 9.6}), profile
+    )
+    assert not slowed["imbalance"]["scheduling_suspect"]
+    # Same walls with flat CPU: the extra time was spent idle, so it is imbalance.
+    flat = model.analyse(host, _summary(walls, dict.fromkeys(walls, 7.5)), profile)
+    assert flat["imbalance"]["scheduling_suspect"]
+
+
+def test_case_times_past_the_serial_run_are_overstated():
+    """One process per short case pays costs the serial run never does."""
+    times = {"fat": 0.66}
+    times.update({f"c{i:02d}": 0.09 for i in range(40)})
+    work = sum(times.values())  # 4.26s against a 2.74s serial run
+    walls = {1: 2.74, 2: 1.58, 4: 0.97, 8: 1.18}
+    cpus = {1: 2.80, 2: 3.04, 4: 3.51, 8: 5.74}
+    profile = {
+        "timings": times,
+        "work": work,
+        "span": 0.66,
+        "startup": {"median": 0.137, "measured": True},
+    }
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), profile)
+    assert result["work_overstated"]
+    assert result["work_exceeds_serial"]
+    # Inflated case times read as blocking (ratio 1.2) and lifted the ceiling past 4.
+    assert result["ceilings"]["hardware"]["n"] == pytest.approx(4 * 2.74 / 3.51)

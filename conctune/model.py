@@ -237,24 +237,46 @@ def analyse(
         }
 
     # --- hardware ceiling from the runs' CPU accounting --------------------
-    probe_n = min(points, key=lambda n: abs(n - cores))
-    cpu_total = summary[probe_n]["cpu_median"]
+    # Case times that sum past the whole serial run are impossible: each one
+    # carries cost the real run never pays (residual boot, clock ramp-up on a
+    # short burst). Past that margin the serial run is the better measure of
+    # the work the cores actually do.
+    work_exceeds_serial = bool(service_times) and work > baseline * 1.25
+    hw_work = baseline if work_exceeds_serial else work
+
+    def cpu_at(n: int) -> float:
+        return summary[n].get("cpu_median") or 0.0
+
+    probe_n: int = min(points, key=lambda n: abs(n - cores))
+    cpu_total = cpu_at(probe_n)
     # A ratio above 1 is not an error: it means a second of work costs less
     # than a second of CPU, because cases spend part of their time blocked
     # (sleeping, waiting on I/O, on a language server, on a subprocess). That
     # is exactly the condition that makes oversubscribing the cores pay.
-    blocking_factor = work / cpu_total if cpu_total > 0 and work > 0 else None
+    blocking_factor = hw_work / cpu_total if cpu_total > 0 and hw_work > 0 else None
+    # Blocking work saturates the cores well past the core count, and a run far
+    # below saturation burns extra CPU per case (idle wake-ups, a clock that
+    # never ramps). Read the CPU where the ceiling itself says saturation is.
+    seen = {probe_n}
+    while blocking_factor and cores * blocking_factor > probe_n:
+        target = cores * blocking_factor
+        nxt = min(points, key=lambda n: abs(n - target))
+        if nxt in seen or cpu_at(nxt) <= 0:
+            break
+        seen.add(nxt)
+        probe_n, cpu_total = nxt, cpu_at(nxt)
+        blocking_factor = hw_work / cpu_total
     if blocking_factor:
         core_seconds = cpu_total / work
         if blocking_factor > 1.05:
             detail = (
-                f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work -- "
+                f"at N={probe_n}: {cpu_total:.1f}s CPU for {hw_work:.1f}s of work -- "
                 f"a case occupies {core_seconds:.2f} of a core while it runs, so "
                 f"about {blocking_factor:.1f} of them fit per core"
             )
         else:
             detail = (
-                f"at N={probe_n}: {cpu_total:.1f}s CPU for {work:.1f}s of work "
+                f"at N={probe_n}: {cpu_total:.1f}s CPU for {hw_work:.1f}s of work "
                 f"({min(blocking_factor, 1.0) * 100:.0f}% of burned cycles useful)"
             )
         source = summary[probe_n].get("cpu_source")
@@ -278,12 +300,12 @@ def analyse(
     # Service times can only be overstated in the mode that reconstructs them
     # one process per case, and only when the boot they each paid was never
     # measured.
-    work_overstated = bool(
+    work_overstated = work_exceeds_serial or bool(
         task_profile
         and task_profile.get("source") != "log"
         and not (task_profile.get("startup") or {}).get("measured")
-        and blocking_factor
-        and blocking_factor > 1.05
+        and cpu_total > 0
+        and work / cpu_total > 1.05
     )
 
     # --- parallelism ceiling ------------------------------------------------
@@ -341,6 +363,7 @@ def analyse(
         "schedule": schedule,
         "imbalance": imbalance,
         "work_overstated": work_overstated,
+        "work_exceeds_serial": work_exceeds_serial,
         "blocking_factor": blocking_factor,
     }
 
@@ -442,20 +465,29 @@ def _imbalance(
 
     The simulated schedule is pure work placement, so worker boot is added
     back before comparing: workers boot concurrently, costing one B of wall
-    time. Without that, startup cost masquerades as load imbalance.
+    time. Without that, startup cost masquerades as load imbalance. The
+    schedule is also stretched by the run's CPU growth over N=1, or a clock
+    that drops under load masquerades as imbalance too.
     """
     rows = {}
+    cpu_serial = (summary.get(1) or {}).get("cpu_median")
     for n, entry in schedule["by_n"].items():
         if n not in summary:
             continue
         observed = summary[n]["wall_median"]
         ideal = entry["ideal_split"]
-        achievable = entry["lpt"] + boot
+        # Idle workers burn no CPU, so CPU per run growing with N means every
+        # case ran slower (a clock that drops under load, shared caches), not
+        # that work sat unassigned. Charge the simulated schedule the same.
+        cpu_n, cpu_1 = summary[n].get("cpu_median"), cpu_serial
+        slowdown = max(1.0, cpu_n / cpu_1) if cpu_n and cpu_1 else 1.0
+        achievable = entry["lpt"] * slowdown + boot
         rows[n] = {
             "observed": observed,
             "ideal_split": ideal,
             "lpt": entry["lpt"],
             "achievable": achievable,
+            "slowdown": slowdown,
             "lower_bound": entry["lower_bound"] + boot,
             "observed_imbalance": observed / ideal if ideal else float("nan"),
             "lpt_imbalance": entry["lpt_imbalance"],

@@ -41,12 +41,12 @@ CEILINGS ON USEFUL CONCURRENCY
                 coherency kappa=0.02263, contention sigma=0.0361
 
 LOAD BALANCE  (observed vs a greedy LPT schedule of the same cases,
-               with one worker boot added back)
+               stretched by CPU growth over N=1, plus one worker boot)
      N   observed   LPT+boot      bound     ratio
   ------------------------------------------------
-     2       2.08       2.48       2.48      0.84
-     4       1.33       1.41       1.36      0.95
-     8       1.22       1.06       1.06      1.15   (saturated)
+     2       2.08       2.50       2.48      0.83
+     4       1.33       1.56       1.36      0.86
+     8       1.22       1.28       1.06      0.95   (saturated)
   rows past N=4 are marked saturated: the cores are full there, so a case no longer runs at the
   service time measured without contention and the comparison says nothing about scheduling.
 

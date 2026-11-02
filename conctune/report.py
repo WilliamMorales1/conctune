@@ -103,7 +103,21 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
             f"  runs on {result['carriers']} carrier thread(s) ([run].carriers), "
             "not every core"
         )
-    if result.get("work_overstated"):
+    if result.get("work_exceeds_serial"):
+        add(
+            f"  ! the case times sum past the whole N=1 run "
+            f"({_fmt(result['baseline'], 2)}s), so they are overstated."
+        )
+        add(
+            "    Short cases timed one per process carry boot and clock ramp-up "
+            "the real run never pays;"
+        )
+        add(
+            "    harvest times from the workload's own log, or time cases inside "
+            "one process. The hardware"
+        )
+        add("    ceiling uses the N=1 wall time as the work instead.")
+    elif result.get("work_overstated"):
         add(
             "  ! the parallel run burned less CPU than these service times imply, "
             "so they are overstated."
@@ -217,7 +231,7 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
     if imbalance:
         add("")
         add("LOAD BALANCE  (observed vs a greedy LPT schedule of the same cases,")
-        add("               with one worker boot added back)")
+        add("               stretched by CPU growth over N=1, plus one worker boot)")
         add(f"  {'N':>4}  {'observed':>9}  {'LPT+boot':>9}  {'bound':>9}  {'ratio':>8}")
         add("  " + RULE[:48])
         for n, row in sorted(imbalance["by_n"].items()):

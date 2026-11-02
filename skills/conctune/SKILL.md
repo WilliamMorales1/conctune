@@ -73,7 +73,7 @@ boot_pattern = 'worker ready in (?P<ms>\d+)ms'           # optional, gives B
 profile_jobs = 1
 ```
 
-- Per-case commands: one process per case, so only for suites of tens of cases, or set `sample = N`.
+- Per-case commands: one process per case, so only for suites of tens of cases, or set `sample = N`. Each case pays a cold start the real run does not, which inflates sub-second cases; prefer log harvest for those.
 
 ```toml
 [cases]
@@ -82,7 +82,7 @@ one = "./run --case {case}"      # {case} is shell-quoted
 startup = "./run --noop"         # boot a worker, do no work; always give it if possible
 ```
 
-Without `startup`, each case time includes one boot, so total work is overstated (the report flags `work_overstated`).
+Without `startup`, each case time includes one boot, so total work is overstated (the report flags `work_overstated`). The flag also fires when the case times sum to over 1.25x the whole N=1 run, even with `startup` given; then the parallelism ceiling and load-balance table are unreliable, and the hardware ceiling falls back to the N=1 wall time.
 
 ## Reading the verdict
 
@@ -99,7 +99,7 @@ Before reporting, check these and pass them on (in `--short` output they are the
 
 - `recommended_n.notes`: read every note. "fastest point is the largest swept" means rerun with larger `--points`.
 - `fit.r2` below 0.90: the USL does not describe this workload, so trust the measured table, not `n_star`.
-- `imbalance.scheduling_suspect` true: the real run trails a greedy schedule of the same cases by over 25%. A pull queue or longest-first ordering is the fix, and worker count is not worth tuning until then.
+- `imbalance.scheduling_suspect` true: the real run trails a greedy schedule of the same cases by over 25%, after the schedule is stretched by the run's CPU growth (a clock that drops under load is not imbalance). A pull queue or longest-first ordering is the fix, and worker count is not worth tuning until then.
 - `unreliable`: worker counts where some runs failed. They are never recommended; report the failure rate, because it often means timing-sensitive tests flake under load.
 - A hardware ceiling above the core count means cases block (I/O, subprocesses), so oversubscribing pays.
 - A hardware ceiling detail ending in "CPU from /proc/stat (or GetSystemTimes) counts every process on the machine" means CPU was measured machine-wide (Linux without a cgroup, or Windows); other load on the machine lowered that ceiling.
