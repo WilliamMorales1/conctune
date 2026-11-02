@@ -202,6 +202,9 @@ finds.
   count (further for a workload that blocks) a case no longer runs at its
   contention-free service time, so the simulated schedule is optimistic there
   and those rows are excluded from the judgement.
+- **`work_overstated`** — the per-case times are too high: either boot was
+  never measured, or they sum to more than 1.25x the whole N=1 run. The
+  parallelism ceiling and balance table inherit the error; prefer log harvest.
 
 ## References
 
