@@ -9,14 +9,19 @@
 name = "nvim-tests"
 
 [run]
-cmd = "NVIM_TEST_JOBS={j} ./test/run.sh /tmp/conctune-nvim.log"
+# The worker count goes through env rather than a `VAR={j} cmd` prefix, which
+# only POSIX shells parse. On Windows, `bash` must be Git Bash, not WSL.
+cmd = "bash test/run.sh conctune-nvim.log"
+env = { NVIM_TEST_JOBS = "{j}" }
 # Placeholder: point at a Neovim config whose test/run.sh takes NVIM_TEST_JOBS
-# and writes one log shard per worker. "~" is expanded.
+# and writes one log shard per worker (~/AppData/Local/nvim on Windows). "~" is
+# expanded.
 cwd = "~/.config/nvim"
 timeout = 1800
 
 [cases]
-log = "/tmp/conctune-nvim.log.shard*"
+# Relative to cwd, so no /tmp that Windows lacks.
+log = "conctune-nvim.log.shard*"
 case_pattern = '^(?:PASS|FAIL)\s+\[(?P<group>[^\]]+)\]\s+(?P<name>.+?)\s+\((?P<ms>\d+)ms\)'
 boot_pattern = 'ready in (?P<ms>\d+)ms'
 profile_jobs = 1

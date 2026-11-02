@@ -66,6 +66,19 @@ def test_relative_cwd_resolves_against_the_spec(write_spec, tmp_path):
     assert spec.cwd == (tmp_path / "sub").resolve()
 
 
+def test_env_carries_the_worker_count(write_spec):
+    """{j} in [run].env reaches the worker count without shell syntax."""
+    spec = task.load_spec(
+        write_spec(
+            "[run]\n"
+            'cmd = "{python} -c \\"import os, sys; '
+            "sys.exit(int(os.environ['JOBS']))\\\"\"\n"
+            'env = { JOBS = "{j}" }\n'
+        )
+    )
+    assert task.run_cmd(spec.run_cmd, spec, jobs=7).returncode == 7
+
+
 # --------------------------------------------------------------------------
 # log harvest
 

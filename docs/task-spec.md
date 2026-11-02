@@ -10,12 +10,17 @@ cmd = "make -j{j}"      # {j} is replaced with the worker count
                         # {python} with the interpreter running conctune
 cwd = "."               # relative to this file; default: the file's directory
 timeout = 900           # seconds per run
-env = { PYTHONHASHSEED = "0" }   # extra environment variables
+env = { PYTHONHASHSEED = "0" }   # extra environment variables; {j} works here too
 shell = true            # false: split cmd into argv and run it without a shell
 carriers = 1            # optional: kernel threads an M:N runtime runs on
 ```
 
 That alone gets you the sweep, the USL fit, and the hardware ceiling.
+
+`{j}` must appear in `cmd` or in an `env` value. For a tool that reads its
+worker count from the environment, put it in `env`
+(`env = { OMP_NUM_THREADS = "{j}" }`) rather than prefixing `cmd` with
+`VAR={j}`, which only POSIX shells parse.
 
 ## User-level and virtual threads
 

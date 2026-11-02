@@ -121,10 +121,11 @@ def load_spec(path: str | os.PathLike) -> TaskSpec:
     run_cmd = run_field("cmd", str)
     if not run_cmd:
         raise TaskError(f"{path}: [run].cmd is required")
-    if "{j}" not in run_cmd:
+    env = {str(k): str(v) for k, v in run_field("env", dict, {}).items()}
+    if "{j}" not in run_cmd and not any("{j}" in v for v in env.values()):
         raise TaskError(
-            f"{path}: [run].cmd must contain the placeholder {{j}}, which is "
-            "substituted with the worker count"
+            f"{path}: [run].cmd (or a [run].env value) must contain the "
+            "placeholder {j}, which is substituted with the worker count"
         )
 
     list_cmd = case_field("list", str)
@@ -177,7 +178,7 @@ def load_spec(path: str | os.PathLike) -> TaskSpec:
         name=field_of(raw, "", "name", str) or path.stem,
         run_cmd=run_cmd,
         cwd=cwd,
-        env={str(k): str(v) for k, v in run_field("env", dict, {}).items()},
+        env=env,
         timeout=None if timeout is None else float(timeout),
         shell=run_field("shell", bool, True),
         carriers=carriers,
@@ -322,8 +323,13 @@ def quote(arg: str) -> str:
     return shlex.quote(arg)
 
 
-def run_cmd(cmd: str, spec: TaskSpec, capture: bool = True) -> RunResult:
-    env = {**os.environ, **spec.env}
+def run_cmd(cmd: str, spec: TaskSpec, capture: bool = True, jobs: int = 1) -> RunResult:
+    # {j} in env reaches the worker count without shell syntax such as
+    # `VAR={j} cmd`, which cmd.exe and PowerShell do not parse.
+    env = {
+        **os.environ,
+        **{k: v.replace("{j}", str(jobs)) for k, v in spec.env.items()},
+    }
     # {python} lets one spec run under whatever interpreter conctune runs
     # under; `python3` is not on PATH on stock Windows.
     cmd = cmd.replace("{python}", quote(sys.executable))
@@ -391,7 +397,7 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
     log_glob = spec.log_glob
     jobs = max(1, spec.profile_jobs)
     log(f"  profiling run at {jobs} worker(s) to populate the log")
-    result = run_cmd(spec.run_cmd.replace("{j}", str(jobs)), spec)
+    result = run_cmd(spec.run_cmd.replace("{j}", str(jobs)), spec, jobs=jobs)
     if result.returncode != 0:
         log(f"  ! profiling run exited {result.returncode}; parsing the log anyway")
 

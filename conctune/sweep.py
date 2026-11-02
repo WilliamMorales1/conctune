@@ -46,12 +46,12 @@ def execute(
     if spec.warmup:
         log(f"warmup: {spec.warmup} run(s) at N={points[-1]} (discarded)")
         for _ in range(spec.warmup):
-            run_cmd(spec.run_cmd.replace("{j}", str(points[-1])), spec)
+            run_cmd(spec.run_cmd.replace("{j}", str(points[-1])), spec, jobs=points[-1])
 
     rows: list[dict] = []
     for order, (n, rep) in enumerate(matrix, 1):
         cmd = spec.run_cmd.replace("{j}", str(n))
-        result = run_cmd(cmd, spec)
+        result = run_cmd(cmd, spec, jobs=n)
         status = "" if result.returncode == 0 else f"  !! exit {result.returncode}"
         log(
             f"[{order}/{len(matrix)}] N={n:<3} rep={rep}  "
