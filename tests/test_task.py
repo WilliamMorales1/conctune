@@ -125,6 +125,20 @@ def test_harvest_absolute_glob(tmp_path):
     assert task.profile_cases(spec, log=lambda _: None)["cases_total"] == 4
 
 
+def test_tmp_placeholder_names_the_platform_temp_dir(tmp_path, monkeypatch):
+    """{tmp} in cmd, env, and log resolve to one absolute temp dir."""
+    monkeypatch.setattr(task.tempfile, "gettempdir", lambda: str(tmp_path))
+    spec = _harvest_spec(tmp_path, glob="{tmp}/run.log.shard*")
+    spec.cwd = tmp_path / "elsewhere"
+    spec.cwd.mkdir()
+    assert task.profile_cases(spec, log=lambda _: None)["cases_total"] == 4
+
+    spec.env = {"OUT": "{tmp}"}
+    script = "import os, sys; sys.exit(os.environ['OUT'] != sys.argv[1])"
+    result = task.run_cmd(f'{{python}} -c "{script}" {{tmp}}', spec)
+    assert result.returncode == 0
+
+
 def test_harvest_reports_a_pattern_that_matches_nothing(tmp_path):
     spec = _harvest_spec(tmp_path, pattern=r"^OK (?P<name>\S+) (?P<ms>\d+)$")
     with pytest.raises(task.TaskError, match="matched nothing") as info:

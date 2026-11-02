@@ -48,7 +48,7 @@ The human report is also saved to `conctune-out/NAME/report.txt`.
 name = "unit-tests"
 
 [run]
-cmd = "pytest -q -n {j}"   # {j} = worker count; required here or in env. {python} = conctune's interpreter
+cmd = "pytest -q -n {j}"   # {j} = worker count; required here or in env. {python} = conctune's interpreter. {tmp} = temp dir
 cwd = "."                  # relative to this file; default: the file's directory
 timeout = 900              # seconds per run
 env = { PYTHONHASHSEED = "0" }   # values may use {j}

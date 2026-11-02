@@ -22,6 +22,7 @@ import shlex
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -328,11 +329,16 @@ def run_cmd(cmd: str, spec: TaskSpec, capture: bool = True, jobs: int = 1) -> Ru
     # `VAR={j} cmd`, which cmd.exe and PowerShell do not parse.
     env = {
         **os.environ,
-        **{k: v.replace("{j}", str(jobs)) for k, v in spec.env.items()},
+        **{
+            k: v.replace("{j}", str(jobs)).replace("{tmp}", tempfile.gettempdir())
+            for k, v in spec.env.items()
+        },
     }
     # {python} lets one spec run under whatever interpreter conctune runs
     # under; `python3` is not on PATH on stock Windows.
     cmd = cmd.replace("{python}", quote(sys.executable))
+    # {tmp} gives harnesses that chdir an absolute path without assuming /tmp.
+    cmd = cmd.replace("{tmp}", quote(tempfile.gettempdir()))
     group = _run_cgroup() if sys.platform.startswith("linux") else None
     before = _cpu_seconds(group)
     start = time.perf_counter()
@@ -394,7 +400,7 @@ def profile_from_log(spec: TaskSpec, log=print) -> dict:
     """
     if not (spec.log_glob and spec.case_pattern):
         raise TaskError("[cases].log and [cases].case_pattern are not set")
-    log_glob = spec.log_glob
+    log_glob = spec.log_glob.replace("{tmp}", tempfile.gettempdir())
     jobs = max(1, spec.profile_jobs)
     log(f"  profiling run at {jobs} worker(s) to populate the log")
     result = run_cmd(spec.run_cmd.replace("{j}", str(jobs)), spec, jobs=jobs)

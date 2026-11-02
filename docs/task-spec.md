@@ -8,6 +8,7 @@ name = "mine"
 [run]
 cmd = "make -j{j}"      # {j} is replaced with the worker count
                         # {python} with the interpreter running conctune
+                        # {tmp} with the platform temp dir (also in env, [cases].log)
 cwd = "."               # relative to this file; default: the file's directory
 timeout = 900           # seconds per run
 env = { PYTHONHASHSEED = "0" }   # extra environment variables; {j} works here too
