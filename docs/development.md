@@ -31,7 +31,7 @@ pytest
 
 ## Checks
 
-CI runs these on Python 3.11 to 3.13, on Linux, macOS, and Windows:
+CI runs these on Python 3.11 to 3.14, on Linux, macOS, and Windows:
 
 ```sh
 ruff check . && ruff format --check .
