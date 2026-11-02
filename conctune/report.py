@@ -55,8 +55,8 @@ ADVICE = {
         [
             "more workers only add context switches and cache pressure",
             (
-                "if cases block rather than compute, this ceiling sits above the core "
-                "count on purpose -- that headroom is the blocked time"
+                "if cases block rather than compute, this ceiling sits above the logical "
+                "CPU count on purpose -- that headroom is the blocked time"
             ),
             "the win is in per-case cost now: algorithm, memory traffic, vectorisation",
             "check the roofline before assuming compute rather than memory bandwidth",

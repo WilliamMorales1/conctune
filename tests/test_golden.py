@@ -49,6 +49,6 @@ def test_short_verdict(tmp_path):
     proc = _model(tmp_path, "--short")
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.splitlines()
-    assert lines[0] == "N=8 binding=hardware r2=1.00"
+    assert lines[0] == "N=8 binding=startup r2=1.00"
     assert all(line.startswith(("note: ", "warn: ")) for line in lines[1:])
     assert (tmp_path / "report.txt").read_text() == (GOLDEN / "report.txt").read_text()

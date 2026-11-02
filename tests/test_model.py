@@ -134,7 +134,7 @@ def test_imbalance_checked_on_a_busy_machine():
             "wall_min": w,
             "wall_max": w,
             "spread": 0.0,
-            "cpu_median": 2.5 * work,  # other load inflates CPU
+            "cpu_median": 5 * work,  # other load inflates CPU
         }
         for n, w in walls.items()
     }
@@ -172,7 +172,7 @@ def test_carriers_replace_cores_in_the_hardware_ceiling():
 
     default = model.analyse(host, summary, profile)
     loop = model.analyse(host, summary, profile, carriers=1)
-    assert default["ceilings"]["hardware"]["n"] == pytest.approx(80)
+    assert default["ceilings"]["hardware"]["n"] == pytest.approx(160)
     assert loop["ceilings"]["hardware"]["n"] == pytest.approx(20)
     assert loop["carriers"] == 1
     assert default["imbalance"] is not None
@@ -207,11 +207,22 @@ def test_blocking_hardware_ceiling_reads_cpu_near_saturation():
 
 
 def test_cpu_bound_hardware_ceiling_stays_at_the_cores():
+    """SMT siblings that add nothing double the CPU billed, not the ceiling."""
     walls = {1: 8.0, 2: 4.48, 4: 2.57, 8: 2.44, 16: 2.65}
     cpus = {1: 7.94, 2: 8.83, 4: 9.90, 8: 18.35, 16: 18.2}
     host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
     result = model.analyse(host, _summary(walls, cpus), None)
-    assert result["ceilings"]["hardware"]["n"] == pytest.approx(4 * 8.0 / 9.90)
+    assert result["ceilings"]["hardware"]["n"] == pytest.approx(8 * 8.0 / 18.35)
+    assert result["ceilings"]["hardware"]["n"] < 4
+
+
+def test_hardware_ceiling_counts_what_smt_adds():
+    """SMT worth 25% more throughput lifts the ceiling from 4 cores to 5."""
+    walls = {1: 8.0, 2: 4.0, 4: 2.0, 8: 1.6}
+    cpus = {1: 8.0, 2: 8.0, 4: 8.0, 8: 12.8}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), None)
+    assert result["ceilings"]["hardware"]["n"] == pytest.approx(5.0)
 
 
 def _build_profile() -> dict:
@@ -259,8 +270,8 @@ def test_case_times_past_the_serial_run_are_overstated():
     result = model.analyse(host, _summary(walls, cpus), profile)
     assert result["work_overstated"]
     assert result["work_exceeds_serial"]
-    # Inflated case times read as blocking (ratio 1.2) and lifted the ceiling past 4.
-    assert result["ceilings"]["hardware"]["n"] == pytest.approx(4 * 2.74 / 3.51)
+    # Inflated case times read as blocking (ratio 1.2) and lifted the ceiling past 8.
+    assert result["ceilings"]["hardware"]["n"] == pytest.approx(8 * 2.74 / 5.74)
 
 
 def test_ceiling_past_the_sweep_does_not_bind():

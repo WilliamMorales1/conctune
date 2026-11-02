@@ -11,7 +11,7 @@ binds decides what is worth optimising:
 |---|---|---|
 | startup | `sqrt(work / B)` | worker boot cost, measured directly |
 | overhead | `sqrt((1 - sigma) / kappa)` | USL peak, fitted from the sweep |
-| hardware | `cores * work / cpu_total` | cores already busy (CPU of the run's process tree) |
+| hardware | `cpus * work / cpu_total` | logical CPUs already busy (CPU of the run's process tree) |
 | parallelism | `work / span` | longest single case; average parallelism |
 
 **A fitted Universal Scalability Law curve.** `S(N) = N / (1 + sigma(N-1) +
@@ -90,13 +90,21 @@ throughput times time in system, `L = lambda * W` [Little 1961]. If each task
 computes for `C` and waits for `W`, a carrier stays busy with
 `1 + W/C` tasks in flight, so the useful concurrency is
 `carriers * (1 + W/C)` [Goetz et al. 2006, §8.2]. That is the hardware ceiling
-conctune already computes, `cores * work / cpu_total`, since `work / cpu_total`
+conctune already computes, `cpus * work / cpu_total`, since `work / cpu_total`
 is `(W + C) / C`. The only change for user-level threads is the multiplier:
-set `[run].carriers` and it counts carriers, not cores. Without it an asyncio
-service on a 4-core laptop would be told it can use four times the concurrency
-its single loop can actually feed.
+set `[run].carriers` and it counts carriers, not CPUs. Without it an asyncio
+service on a laptop with 8 logical CPUs would be told it can use eight times
+the concurrency its single loop can actually feed.
 
-`cpu_total` is read at the worker count nearest the core (or carrier) count,
+`cpus` is the logical CPU count, not the physical core count. CPU time is
+billed per logical CPU, so two SMT siblings sharing a core each bill their full
+wall time: if SMT adds nothing, `cpu_total` doubles at saturation and the
+ceiling lands back at the physical cores; if it adds 25% throughput, the
+ceiling lands at 1.25x the physical cores. Counting physical cores would price
+SMT at nothing, and an SMT machine would beat its own hardware ceiling on
+every CPU-bound sweep.
+
+`cpu_total` is read at the worker count nearest the CPU (or carrier) count,
 then, for blocking work, at the count nearest the ceiling it implies, until the
 two agree. A run far below saturation burns more CPU per case (idle wake-ups, a
 clock that never ramps up), so reading it there would understate how many
@@ -140,8 +148,8 @@ Measured: `examples/asyncio.toml`, 160 tasks that each wait 200 ms and compute
 | 64 | 2.18 | 15.34 |
 | 256 | 2.19 | 15.33 |
 
-Hardware ceiling with `carriers = 1`: about 23 (counting cores would have
-said about 90).
+Hardware ceiling with `carriers = 1`: about 23 (counting the 8 logical CPUs
+would have said about 180).
 Recommended: 48. The curve flattens at about twice the ceiling rather than at
 it because cases arrive in bursts, so a little extra in flight keeps the loop
 fed through the gaps; past 48 nothing changes, because the loop is the
@@ -198,7 +206,7 @@ finds.
   extend `--points`.
 - **hardware ceiling below the measured optimum** — the ceilings are
   first-order estimates; workers past them still win, just sub-linearly.
-- **hardware ceiling *above* the core count** — the cases block rather than
+- **hardware ceiling *above* the logical CPU count** — the cases block rather than
   compute (waiting on I/O, a language server, a subprocess), so oversubscribing
   pays. The report says by how much.
 - **rows marked `(saturated)` in the balance table** — past the physical core

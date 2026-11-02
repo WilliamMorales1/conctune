@@ -30,9 +30,9 @@ goroutines, Java virtual threads, or Node promises, make it the number of tasks
 in flight (a semaphore or pool size) and set `carriers` to the kernel threads
 the runtime multiplexes them onto: 1 for asyncio and Node, `GOMAXPROCS` for Go,
 `jdk.virtualThreadScheduler.parallelism` for Java. The hardware ceiling then
-counts carriers instead of cores, and the load-balance check is skipped, since
-tasks sharing a carrier queue for it in bursts that the check would misread as
-imbalance. Sweep geometrically and far past the core count: a task that mostly
+counts carriers instead of logical CPUs, and the load-balance check is
+skipped, since tasks sharing a carrier queue for it in bursts that the check
+would misread as imbalance. Sweep geometrically and far past the core count: a task that mostly
 waits costs a fraction of a core. See [model.md](model.md#user-level-and-virtual-threads).
 
 ## Cases

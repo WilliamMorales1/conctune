@@ -5,7 +5,7 @@ Scalability Law curve.  The recommendation is the minimum of the ceilings;
 which one binds determines what is worth optimising next.
 
     overhead-bound   N* = sqrt((1 - sigma) / kappa)   USL peak
-    hardware-bound   N  = cores * work / cpu_total    no idle cores left
+    hardware-bound   N  = cpus * work / cpu_total     no idle CPUs left
     parallelism-bound N = work / span                 average parallelism
 
 The USL fit is linearised with Gunther's transform, so no scipy is needed:
@@ -199,9 +199,14 @@ def analyse(
     fit = fit_usl(points, speedup)
 
     cores_physical = machine.get("cores_physical", 1)
+    # CPU time is charged per logical CPU, so two SMT siblings sharing a core
+    # each bill their full wall time: counting logical CPUs and reading the CPU
+    # at their saturation prices SMT at what it actually adds, where counting
+    # physical cores prices it at nothing.
+    cpus = machine.get("cores_logical", cores_physical)
     # An event loop or M:N runtime runs its tasks on fewer kernel threads than
     # the machine has cores; those threads are the cores it can fill.
-    cores = carriers or cores_physical
+    cores = carriers or cpus
 
     # --- work and span -----------------------------------------------------
     if task_profile and task_profile.get("timings"):
@@ -293,7 +298,7 @@ def analyse(
             )
         ceilings["hardware"] = {
             "n": cores * blocking_factor,
-            "label": f"{'carriers' if carriers else 'cores'} * work / cpu_total",
+            "label": f"{'carriers' if carriers else 'cpus'} * work / cpu_total",
             "detail": detail,
         }
 
@@ -339,7 +344,7 @@ def analyse(
     # blocking workload fits more. Not the hardware ceiling itself: per-worker
     # boot and stray load push it under the core count, which would hide the
     # very imbalance this check exists to catch.
-    valid_to = cores * max(1.0, blocking_factor or 1.0)
+    valid_to = (carriers or cores_physical) * max(1.0, blocking_factor or 1.0)
     # Tasks sharing a carrier wake in bursts and queue for it long before it
     # is saturated (a convoy): contention the LPT simulation cannot tell from
     # imbalance, so there is no row it could fairly judge.

@@ -59,7 +59,7 @@ points = [1, 2, 4, 6, 8, 12, 16]
 repeats = 3
 ```
 
-For user-level threads (asyncio tasks, goroutines, Java virtual threads, Node), `{j}` is the in-flight task limit and `carriers` is the kernel threads the runtime runs them on: 1 for asyncio and Node, `GOMAXPROCS` for Go, `jdk.virtualThreadScheduler.parallelism` for Java. With it set, the hardware ceiling counts carriers instead of cores, `.analysis.carriers` echoes it, and `.imbalance` is null (the load-balance check does not apply). Sweep geometrically past the core count, e.g. `--points 1,4,16,64,256,1024`.
+For user-level threads (asyncio tasks, goroutines, Java virtual threads, Node), `{j}` is the in-flight task limit and `carriers` is the kernel threads the runtime runs them on: 1 for asyncio and Node, `GOMAXPROCS` for Go, `jdk.virtualThreadScheduler.parallelism` for Java. With it set, the hardware ceiling counts carriers instead of logical CPUs, `.analysis.carriers` echoes it, and `.imbalance` is null (the load-balance check does not apply). Sweep geometrically past the core count, e.g. `--points 1,4,16,64,256,1024`.
 
 Start with only `[run]`. That gives the sweep, the USL fit, and the hardware ceiling. Add `[cases]` when the user wants to know why it stops scaling, since it unlocks the parallelism ceiling, the startup ceiling, and the load-balance check. Two ways:
 
@@ -102,7 +102,7 @@ Before reporting, check these and pass them on (in `--short` output they are the
 - `fit.r2` below 0.90: the USL does not describe this workload, so trust the measured table, not `n_star`.
 - `imbalance.scheduling_suspect` true: the real run trails a greedy schedule of the same cases by over 25%, after the schedule is stretched by the run's CPU growth (a clock that drops under load is not imbalance). A pull queue or longest-first ordering is the fix, and worker count is not worth tuning until then.
 - `unreliable`: worker counts where some runs failed. They are never recommended; report the failure rate, because it often means timing-sensitive tests flake under load.
-- A hardware ceiling above the core count means cases block (I/O, subprocesses), so oversubscribing pays.
+- A hardware ceiling above the logical CPU count means cases block (I/O, subprocesses), so oversubscribing pays.
 - A hardware ceiling detail ending in "CPU from /proc/stat (or GetSystemTimes) counts every process on the machine" means CPU was measured machine-wide (Linux without a cgroup, or Windows); other load on the machine lowered that ceiling.
 - A detail ending in "CPU from getrusage misses processes the run detaches" (macOS) means daemons the workload spawned went uncounted; the ceiling may read high.
 

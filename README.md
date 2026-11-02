@@ -8,14 +8,14 @@ overhead, the longest single case, or busy cores. Point it at `make -j`,
 
 ```
 CEILINGS ON USEFUL CONCURRENCY
-  hardware      N <=    4.1   cores * work / cpu_total  <== BINDING
-                at N=4: 4.4s CPU for 4.5s of work (100% of burned cycles useful)
-  startup       N <=    4.3   sqrt(work / B), measured boot cost
+  startup       N <=    4.3   sqrt(work / B), measured boot cost  <== BINDING
                 worker boot B=0.241s against 4.5s of work
   parallelism   N <=    5.5   work / span
                 work=4.5s, span=0.8s (longest single case is 18.2% of all work)
   overhead      N <=    6.5   USL peak, sqrt((1-sigma)/kappa)
                 coherency kappa=0.02263, contention sigma=0.0361
+  hardware      N <=    7.2   cpus * work / cpu_total
+                at N=8: 5.0s CPU for 4.5s of work (90% of burned cycles useful)
 
 ========================================================================
  RECOMMENDED WORKER COUNT: 8
@@ -23,7 +23,9 @@ CEILINGS ON USEFUL CONCURRENCY
 ========================================================================
    fastest measured : N=8 at 1.216s (3.17x over serial)
    knee of the curve: N=4
-   binding constraint: hardware (estimates N <= 4.1)
+   binding constraint: startup (estimates N <= 4.3)
+   ! the fastest point is the largest swept (N=8); the peak may lie beyond it -- extend --points and re-run
+   ! the startup ceiling estimates N<=4.3, below the measured optimum of 8 -- the ceiling is a first-order estimate and the workers past it still win, just sub-linearly
 ```
 
 Requires Python 3.11+ and numpy, on Linux, macOS, or Windows.
