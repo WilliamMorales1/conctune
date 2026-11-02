@@ -319,13 +319,18 @@ def analyse(
             ),
         }
 
-    binding = min(ceilings.items(), key=lambda kv: kv[1]["n"]) if ceilings else None
+    nearest = min(ceilings.items(), key=lambda kv: kv[1]["n"]) if ceilings else None
 
     # --- best measured, and the knee ---------------------------------------
     best_n = min(points, key=lambda n: summary[n]["wall_median"])
+    # A ceiling past the largest swept N, with the curve still rising at the
+    # edge, has not been reached: naming it as the limit misdiagnoses a task
+    # that simply was not swept far enough.
+    unbound = bool(nearest and best_n == max(points) and nearest[1]["n"] > best_n)
+    binding = None if unbound else nearest
     knee = _knee(points, speedup)
 
-    recommended = _recommend(timed, points, binding, knee, unreliable=unreliable)
+    recommended = _recommend(timed, points, nearest, knee, unreliable=unreliable)
 
     schedule = schedule_analysis(service_times, points) if service_times else None
     # Past saturation a case no longer runs at its contention-free service
@@ -355,6 +360,7 @@ def analyse(
         "fit": fit,
         "ceilings": ceilings,
         "binding": binding[0] if binding else None,
+        "nearest_ceiling": nearest[0] if nearest else None,
         "best_measured_n": best_n,
         "best_measured_wall": summary[best_n]["wall_median"],
         "knee": knee,

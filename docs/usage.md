@@ -33,7 +33,7 @@ hand-edit a profile and see what changes.
 - `--seed N` makes the run order reproducible.
 - `--no-randomize` (sweep, auto) runs in order, which is not advised.
 - `--json` (model, auto) prints a machine-readable report on stdout with progress on stderr.
-- `--short` (model, auto) prints a one-line verdict such as `N=8 binding=hardware r2=1.00`, then one `note:` or `warn:` line each, and still saves the full report.
+- `--short` (model, auto) prints a one-line verdict such as `N=8 binding=hardware r2=1.00` (`binding=none` when no ceiling is reached within the sweep), then one `note:` or `warn:` line each, and still saves the full report.
 
 ## Exit codes
 

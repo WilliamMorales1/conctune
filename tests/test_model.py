@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from conctune import machine, model
+from conctune import machine, model, report
 
 
 @pytest.mark.parametrize(
@@ -261,3 +261,26 @@ def test_case_times_past_the_serial_run_are_overstated():
     assert result["work_exceeds_serial"]
     # Inflated case times read as blocking (ratio 1.2) and lifted the ceiling past 4.
     assert result["ceilings"]["hardware"]["n"] == pytest.approx(4 * 2.74 / 3.51)
+
+
+def test_ceiling_past_the_sweep_does_not_bind():
+    """A still-rising curve whose ceilings all lie beyond it is not yet bound."""
+    walls = {1: 33.5, 2: 17.4, 4: 9.4}
+    cpus = {1: 1.43, 2: 1.41, 4: 1.39}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), None, carriers=1)
+    assert result["ceilings"]["hardware"]["n"] > 4
+    assert result["binding"] is None
+    assert result["nearest_ceiling"] == "hardware"
+    text = report.render(host, result, _summary(walls, cpus), "t")
+    assert "NOT YET BOUND" in text
+    assert "HARDWARE-BOUND" not in text
+    assert report.render_short(host, result).startswith("N=4 binding=none")
+
+
+def test_ceiling_inside_the_sweep_still_binds():
+    walls = {1: 8.0, 2: 4.48, 4: 2.57, 8: 2.44, 16: 2.65}
+    cpus = {1: 7.94, 2: 8.83, 4: 9.90, 8: 18.35, 16: 18.2}
+    host = {"cores_physical": 4, "cores_logical": 8, "hostname": "t"}
+    result = model.analyse(host, _summary(walls, cpus), None)
+    assert result["binding"] == result["nearest_ceiling"] == "hardware"

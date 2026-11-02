@@ -11,7 +11,7 @@ Run it as `conctune` if installed (`pipx install conctune` or `uv tool install c
 
 ## Workflow
 
-1. Find how the workload takes a worker count: a flag (`make -j N`, `pytest -n N`, `xargs -P N`) or an env var (`JOBS=N ./run.sh`). If it has neither, conctune cannot drive it; say so instead of guessing.
+1. Find how the workload takes a worker count: a flag (`make -j N`, `pytest -n N`, `xargs -P N`) or an env var (put it in `[run].env` as `JOBS = "{j}"`, not a `JOBS={j}` prefix, which breaks on Windows). If it has neither, conctune cannot drive it; say so instead of guessing.
 2. Time one serial run first (`time CMD` at 1 worker). The full sweep costs about `points x repeats` runs, each between that time and a fraction of it. Over about 30 minutes in total, cut points or repeats and tell the user the estimate.
 3. Write the spec to `NAME.toml` (see Task spec). Only `[run].cmd` is required.
 4. Run all stages. The sweep can take minutes, so run it in the background and wait for it to exit:
@@ -28,13 +28,13 @@ note: the fastest point is the largest swept (N=8); the peak may lie beyond it -
 warn: turbo boost is on -- ...
 ```
 
-The first line is `N=<recommended> binding=<ceiling> r2=<fit R^2>`, followed by flags only when they apply: `scheduling_suspect`, `unreliable=<worker counts>`, `work_overstated`. Each `note:` line comes from the recommendation and each `warn:` line from the machine probe; pass both on. `conctune model --task NAME.toml --short` re-analyses the saved runs without running anything.
+The first line is `N=<recommended> binding=<ceiling or none> r2=<fit R^2>`, followed by flags only when they apply: `scheduling_suspect`, `unreliable=<worker counts>`, `work_overstated`. Each `note:` line comes from the recommendation and each `warn:` line from the machine probe; pass both on. `conctune model --task NAME.toml --short` re-analyses the saved runs without running anything.
 
 For ceiling values and details, use JSON instead (`--json` on `auto` or `model`):
 
 ```sh
 conctune model --task NAME.toml --json | jq '.analysis | {
-  n: .recommended_n.n, notes: .recommended_n.notes, binding,
+  n: .recommended_n.n, notes: .recommended_n.notes, binding, nearest_ceiling,
   ceilings: (.ceilings | map_values(.n)), r2: .fit.r2,
   scheduling_suspect: .imbalance.scheduling_suspect,
   unreliable, work_overstated }'
@@ -48,10 +48,10 @@ The human report is also saved to `conctune-out/NAME/report.txt`.
 name = "unit-tests"
 
 [run]
-cmd = "pytest -q -n {j}"   # {j} = worker count; required. {python} = conctune's interpreter
+cmd = "pytest -q -n {j}"   # {j} = worker count; required here or in env. {python} = conctune's interpreter
 cwd = "."                  # relative to this file; default: the file's directory
 timeout = 900              # seconds per run
-env = { PYTHONHASHSEED = "0" }
+env = { PYTHONHASHSEED = "0" }   # values may use {j}
 carriers = 1               # optional; only for user-level threads, see below
 
 [sweep]                    # optional; omit points to use the machine's suggestion
@@ -86,7 +86,7 @@ Without `startup`, each case time includes one boot, so total work is overstated
 
 ## Reading the verdict
 
-`recommended_n.n` is the answer and comes from measurements, not the model. `binding` is the diagnosis: the smallest ceiling, which tells the user what to change.
+`recommended_n.n` is the answer and comes from measurements, not the model. `binding` is the diagnosis: the smallest ceiling, which tells the user what to change. It is null (`binding=none`) when speedup still climbs at the largest swept N and every ceiling lies beyond it; `nearest_ceiling` then names the smallest one.
 
 | `binding` | Means | Tell the user |
 | --- | --- | --- |
@@ -94,6 +94,7 @@ Without `startup`, each case time includes one boot, so total work is overstated
 | `overhead` | coordination grows with N; past `fit.n_star` runs get slower | same as startup; never run past the peak |
 | `parallelism` | the longest case sets a floor | split the fat cases, or schedule them first |
 | `hardware` | cores are busy with useful work | more workers will not help; make each case cheaper |
+| `none` | no ceiling reached within the sweep | rerun with `--points` extended toward `nearest_ceiling`; the N so far is a lower bound |
 
 Before reporting, check these and pass them on (in `--short` output they are the flags and `note:` lines):
 

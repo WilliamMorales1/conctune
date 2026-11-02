@@ -62,7 +62,10 @@ share a process.
 **A recommendation from the measurements, not the model.** The ceilings are
 estimates; the sweep is ground truth. conctune recommends the cheapest N within
 3% of the fastest measured wall time, then reports the binding ceiling as
-diagnosis alongside it — and flags the disagreement when the two differ.
+diagnosis alongside it — and flags the disagreement when the two differ. When
+speedup still climbs at the largest swept N and every ceiling lies beyond it,
+no ceiling binds: the report says NOT YET BOUND, names the nearest ceiling, and
+asks for a wider sweep.
 
 ## User-level and virtual threads
 

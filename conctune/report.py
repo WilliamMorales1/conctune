@@ -223,6 +223,8 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
         add("  none computable")
     for name, entry in sorted(result["ceilings"].items(), key=lambda kv: kv[1]["n"]):
         mark = "<== BINDING" if name == result["binding"] else ""
+        if not result["binding"] and name == result.get("nearest_ceiling"):
+            mark = "<== nearest, not reached"
         add(f"  {name:<13} N <= {_fmt(entry['n']):>6}   {entry['label']}  {mark}")
         add(f"                {entry['detail']}")
 
@@ -300,6 +302,12 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
             f"   binding constraint: {result['binding']} "
             f"(estimates N <= {_fmt(ceiling['n'])})"
         )
+    elif result.get("nearest_ceiling"):
+        ceiling = result["ceilings"][result["nearest_ceiling"]]
+        add(
+            f"   binding constraint: none reached (nearest: "
+            f"{result['nearest_ceiling']}, N <= {_fmt(ceiling['n'])})"
+        )
     for note in recommended.get("notes", []):
         add(f"   ! {note}")
 
@@ -341,6 +349,17 @@ def render(machine: dict, result: dict, summary: dict, task_name: str) -> str:
         add(headline)
         for bullet in bullets:
             add(f"  - {bullet}")
+    elif result.get("nearest_ceiling"):
+        ceiling = result["ceilings"][result["nearest_ceiling"]]
+        add(
+            "NOT YET BOUND -- speedup is still climbing at the largest swept N, "
+            "and every ceiling lies beyond it."
+        )
+        add(
+            f"  - extend --points toward the {result['nearest_ceiling']} ceiling "
+            f"(N <= {_fmt(ceiling['n'])}) and re-run"
+        )
+        add("  - the recommendation above is the best measured so far, not the optimum")
 
     add("")
     return "\n".join(out)
